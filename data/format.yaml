@@ -1,0 +1,15 @@
+# 输出格式模板
+# template: 结构化输出骨架
+# suffix: 固定结尾，validator 兜底追加
+
+template:
+  - "【结论】"
+  - "{conclusion}"
+  - ""
+  - "【分析】"
+  - "{analysis}"
+  - ""
+  - "【建议】"
+  - "{suggestion}"
+
+suffix: "我的回答完毕。"

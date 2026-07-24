@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 语音对话</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+            background: linear-gradient(160deg, #1a0a2e 0%, #2d1b69 40%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .card {
+            width: 100%;
+            max-width: 380px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(180, 150, 220, 0.15);
+            border-radius: 20px;
+            padding: 32px 28px;
+        }
+
+        h2 {
+            text-align: center;
+            color: #c4b5e3;
+            font-size: 22px;
+            font-weight: 500;
+            margin-bottom: 24px;
+            letter-spacing: 2px;
+        }
+
+        .group {
+            margin-bottom: 16px;
+        }
+
+        .group label {
+            display: block;
+            font-size: 13px;
+            color: #a090c0;
+            margin-bottom: 6px;
+        }
+
+        .group input {
+            width: 100%;
+            padding: 10px 14px;
+            background: rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(180, 150, 220, 0.3);
+            border-radius: 12px;
+            color: #e0d0ff;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .group input:focus {
+            border-color: #a080e0;
+        }
+
+        .group input::placeholder {
+            color: #5a4a7a;
+        }
+
+        .error {
+            color: #ff6b6b;
+            font-size: 13px;
+            text-align: center;
+            min-height: 20px;
+            margin-bottom: 8px;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #6a3de8, #9b59b6);
+            color: #fff;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 16px;
+        }
+
+        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+        .btn:active { transform: scale(0.98); }
+
+        .toggle {
+            text-align: center;
+            font-size: 13px;
+            color: #8a7aaa;
+        }
+
+        .toggle a {
+            color: #c0a0e0;
+            cursor: pointer;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .toggle a:hover { color: #e0d0ff; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h2 id="cardTitle">登录</h2>
+
+    <div class="error" id="errMsg"></div>
+
+    <div class="group">
+        <label>用户名</label>
+        <input type="text" id="username" placeholder="2-32 位字符" autocomplete="off">
+    </div>
+
+    <div class="group">
+        <label>密码</label>
+        <input type="password" id="password" placeholder="至少 4 位字符">
+    </div>
+
+    <div class="group" id="confirmGroup" style="display:none;">
+        <label>确认密码</label>
+        <input type="password" id="confirmPassword" placeholder="请再输入一次密码">
+    </div>
+
+    <button class="btn" id="submitBtn">登 录</button>
+
+    <div class="toggle" id="toggleText">
+        没有账号？<a id="toggleLink">去注册</a>
+    </div>
+</div>
+
+<script>
+const cardTitle = document.getElementById("cardTitle");
+const errMsg = document.getElementById("errMsg");
+const usernameEl = document.getElementById("username");
+const passwordEl = document.getElementById("password");
+const confirmGroup = document.getElementById("confirmGroup");
+const confirmPasswordEl = document.getElementById("confirmPassword");
+const submitBtn = document.getElementById("submitBtn");
+const toggleLink = document.getElementById("toggleLink");
+
+let mode = "login";   // "login" | "register"
+
+function setMode(m) {
+    mode = m;
+    if (m === "register") {
+        cardTitle.textContent = "注册";
+        submitBtn.textContent = "注 册";
+        confirmGroup.style.display = "block";
+        toggleLink.textContent = "去登录";
+        document.getElementById("toggleText").innerHTML =
+            '已有账号？<a id="toggleLink">去登录</a>';
+    } else {
+        cardTitle.textContent = "登录";
+        submitBtn.textContent = "登 录";
+        confirmGroup.style.display = "none";
+        document.getElementById("toggleText").innerHTML =
+            '没有账号？<a id="toggleLink">去注册</a>';
+    }
+    // 重新绑定 toggle link（因为 innerHTML 重建了元素）
+    document.getElementById("toggleLink").addEventListener("click", () => {
+        setMode(mode === "login" ? "register" : "login");
+        errMsg.textContent = "";
+    });
+    errMsg.textContent = "";
+}
+
+toggleLink.addEventListener("click", () => {
+    setMode(mode === "login" ? "register" : "login");
+});
+
+// Enter 键提交
+[usernameEl, passwordEl, confirmPasswordEl].forEach(el => {
+    el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") submitBtn.click();
+    });
+});
+
+submitBtn.addEventListener("click", async () => {
+    const username = usernameEl.value.trim();
+    const password = passwordEl.value;
+
+    if (!username || !password) {
+        errMsg.textContent = "请填写所有字段";
+        return;
+    }
+
+    if (mode === "register") {
+        if (password !== confirmPasswordEl.value) {
+            errMsg.textContent = "两次密码输入不一致";
+            return;
+        }
+    }
+
+    errMsg.textContent = "";
+    submitBtn.disabled = true;
+    submitBtn.textContent = "处理中...";
+
+    const endpoint = mode === "register" ? "/auth/register" : "/auth/login";
+
+    try {
+        const resp = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+        });
+        const data = await resp.json();
+
+        if (resp.ok) {
+            window.location.href = "/";
+        } else {
+            errMsg.textContent = data.error || "操作失败";
+        }
+    } catch (e) {
+        errMsg.textContent = "网络错误，请重试";
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = mode === "register" ? "注 册" : "登 录";
+    }
+});
+
+// 如果已经登录，直接跳转
+(async () => {
+    try {
+        const resp = await fetch("/auth/me");
+        if (resp.ok) window.location.href = "/";
+    } catch (_) {}
+})();
+</script>
+</body>
+</html>

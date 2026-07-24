@@ -1,0 +1,368 @@
+"""
+向量记忆存储 —— pgvector 语义检索
+
+架构定位：双轨记忆【冷层】的"语义向量"存储（与 json_long_memory.py 并列：
+前者存结构化事实、本文件存可语义检索的向量，两者都由 MemoryExtractor 写入）。
+
+技术栈（最终方案）：
+  - PostgreSQL + pgvector: 向量存储与 ANN 检索（余弦距离 <=>）
+  - asyncpg: 异步 PostgreSQL 驱动
+  - 默认 embedding: BGE-M3（1024 维，sentence-transformers 本地运行，GPU 优先）
+  - 可替换 embedding: 传入自定义 async embed_fn（如 MiniLM / OpenAI）
+
+架构角色：
+  Vector Memory 负责"从历史记忆中找出与当前输入语义相似的内容"。
+  不存全文，只存摘要 + 向量 + 元数据。
+
+设计决策：
+  - embed_fn 可插拔：__init__ 接收 async callable，默认用 BGE-M3
+  - embedding_dim 固定 1024（与 BGE-M3 输出维度一致）
+  - 接口：add / search / ensure_table / close / count，全异步
+  - source 字段隔离用户
+  - BGE-M3 未下载时给出清晰指引（不静默失败）
+"""
+
+import os
+import json
+import hashlib
+import asyncio
+from typing import Optional, List, Dict, Any, Callable, Awaitable
+
+# EmbedFn: async (text: str) -> list[float]  （也兼容返回普通 list 的同步函数）
+EmbedFn = Callable[[str], Awaitable[List[float]]]
+
+# ---- 全局模型缓存（避免每次实例化都重新加载） ----
+_global_bge_model = None
+
+# BGE-M3 输出维度
+BGE_M3_DIM = 1024
+# BGE-M3 官方检索指令前缀：仅用于"查询"侧，存储的 passage 不加。
+# 不加前缀会导致查询向量与 passage 向量空间不对齐，检索质量骤降。
+# 详见 https://huggingface.co/BAAI/bge-m3#usage
+BGE_M3_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+# HuggingFace 镜像（国内网络加速下载）
+HF_MIRROR = "https://hf-mirror.com"
+# HuggingFace 模型缓存目录（统一存到项目内，避免散落 C 盘 / 重复下载）
+HF_HOME = "E:/robot_system/models/hf_cache"
+
+
+def _load_bge_m3():
+    """惰性加载 BGE-M3 模型，全局单例。GPU 可用时自动走 CUDA。
+
+    模型已完整缓存到本地（HF_HOME 指定目录），因此强制离线模式：
+    完全不触网，规避国内直连 huggingface.co 超时（WinError 10060）。
+    """
+    global _global_bge_model
+    if _global_bge_model is None:
+        # 必须用赋值（=）而非 setdefault：若环境已存在 HF_ENDPOINT 等变量，
+        # setdefault 不会覆盖，会回退到默认 huggingface.co 导致连接超时。
+        os.environ["HF_HOME"] = HF_HOME
+        os.environ["HF_ENDPOINT"] = HF_MIRROR
+        # 模型已本地缓存，强制离线：huggingface_hub 只走本地缓存、不发任何网络请求
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise RuntimeError(
+                "sentence-transformers 未安装，请先执行：\n"
+                "  pip install sentence-transformers torch\n"
+                f"原始错误：{e}"
+            )
+        try:
+            _global_bge_model = SentenceTransformer("BAAI/bge-m3", local_files_only=True)
+        except Exception as e:
+            raise RuntimeError(
+                "加载 BGE-M3 模型失败。模型应已缓存到：\n"
+                f"  {HF_HOME}\n"
+                "若缓存缺失，请联网执行以下代码下载（已配镜像 hf-mirror.com）：\n"
+                "  >>> import os\n"
+                "  >>> os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'\n"
+                "  >>> from sentence_transformers import SentenceTransformer\n"
+                "  >>> SentenceTransformer('BAAI/bge-m3')\n"
+                f"原始错误：{e}"
+            )
+    return _global_bge_model
+
+
+async def bge_m3_embed(text: str, is_query: bool = False) -> List[float]:
+    """
+    默认 embedding：BGE-M3（1024 维，归一化后余弦相似度）
+
+    BGE-M3 的检索质量强依赖指令前缀：
+      - 存储（passage）：直接 encode，不加前缀
+      - 查询（query）：必须加 BGE_M3_QUERY_PREFIX，否则相似度严重漂移
+    详见 https://huggingface.co/BAAI/bge-m3
+
+    sentence-transformers 的 load + encode 都是同步阻塞的，
+    整段用 asyncio.to_thread 卸载到线程池，避免阻塞事件循环。
+    """
+    text_for_encode = f"{BGE_M3_QUERY_PREFIX}{text}" if is_query else text
+
+    def _do_encode():
+        """同步编码：加载（或取全局单例）BGE-M3 模型并对文本做归一化编码。
+
+        设计为在线程池（asyncio.to_thread）中调用，避免阻塞事件循环。
+        """
+        model = _load_bge_m3()
+        return model.encode(text_for_encode, normalize_embeddings=True)
+
+    emb = await asyncio.to_thread(_do_encode)
+    if hasattr(emb, "tolist"):
+        return emb.tolist()
+    return list(emb)
+
+
+# ============================================================
+# VectorMemory
+# ============================================================
+
+class VectorMemory:
+    """向量记忆存储（pgvector 后端，BGE-M3 默认 embedding）
+
+    用法：
+        # 默认：BGE-M3 1024 维 + 本地 PG
+        vm = VectorMemory()
+
+        # 自定义连接串
+        vm = VectorMemory(dsn="postgresql://user:pass@host:5432/robot")
+
+        # 自定义 embedding（如 MiniLM / OpenAI）
+        async def my_embed(text): ...
+        vm = VectorMemory(embedding_dim=384, embed_fn=my_embed)
+    """
+
+    def __init__(
+        self,
+        dsn: Optional[str] = None,
+        embedding_dim: int = BGE_M3_DIM,
+        embed_fn: Optional[EmbedFn] = None,
+    ):
+        """初始化向量记忆存储。
+
+        Args:
+            dsn: PostgreSQL 连接串；缺省时读环境变量 PG_DSN，再缺省用
+                 localhost:5432/robot 默认串。
+            embedding_dim: 向量维度（默认 1024，与 BGE-M3 一致）。
+            embed_fn: 可插拔的异步 embedding 函数；为 None 时走默认 BGE-M3。
+        连接池与建表均惰性创建（首次 _get_pool 时），构造本身不连库。
+        """
+        self._dsn = dsn or os.getenv(
+            "PG_DSN",
+            "postgresql://postgres:postgres@localhost:5432/robot",
+        )
+        self._embedding_dim = embedding_dim
+        self._embed_fn: Optional[EmbedFn] = embed_fn
+        self._pool = None
+        self._table_ready = False
+
+    # ---- 连接 ----
+
+    async def _init_conn(self, conn):
+        """连接池 init 回调：为每条连接注册 pgvector 类型"""
+        from pgvector.asyncpg import register_vector
+        await register_vector(conn)
+
+    async def _get_pool(self):
+        """惰性创建连接池 + 确保表存在"""
+        if self._pool is None:
+            import asyncpg
+            self._pool = await asyncpg.create_pool(
+                self._dsn,
+                min_size=1,
+                max_size=5,
+                init=self._init_conn,
+            )
+            # 建表（首次创建 pool 时执行一次）
+            async with self._pool.acquire() as conn:
+                await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                await self._create_table_sql(conn)
+            self._table_ready = True
+        return self._pool
+
+    # ---- 建表 ----
+
+    async def _create_table_sql(self, conn) -> None:
+        """建表 + 建 HNSW 索引（幂等）。
+
+        表 memory_vectors：source + content_hash 唯一约束实现 UPSERT 去重；
+        embedding 列维度用当前 _embedding_dim；HNSW(vector_cosine_ops)
+        支撑毫秒级近似最近邻检索。首次创建连接池时调用一次。
+        """
+        await conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS memory_vectors (
+                id          SERIAL PRIMARY KEY,
+                source      TEXT NOT NULL DEFAULT 'default',
+                content_hash TEXT NOT NULL,
+                summary     TEXT NOT NULL,
+                full_text   TEXT DEFAULT '',
+                embedding   vector({self._embedding_dim}),
+                metadata    JSONB DEFAULT '{{}}',
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(source, content_hash)
+            )
+        """)
+        # HNSW 索引（pgvector 0.8.x 原生支持，增量构建、无需训练）
+        await conn.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_mv_embedding
+            ON memory_vectors
+            USING hnsw (embedding vector_cosine_ops)
+        """)
+
+    async def ensure_table(self) -> None:
+        """确保 pgvector 扩展和表存在（幂等，可单独调用）"""
+        if self._table_ready:
+            return
+        await self._get_pool()  # 内部会建表并置 _table_ready
+
+    # ---- 写 ----
+
+    async def add(
+        self,
+        source: str,
+        summary: str,
+        full_text: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        添加记忆片段（幂等 UPSERT，按 source+summary 哈希去重）
+
+        参数：
+          source: 用户 / 会话标识
+          summary: 语义摘要（用于检索）
+          full_text: 完整原文（可选）
+          metadata: 自定义元数据
+
+        返回：内容哈希（content_hash）
+        """
+        content_hash = self._hash(source + summary)
+        embedding = await self._embed(summary)
+
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO memory_vectors
+                    (source, content_hash, summary, full_text, embedding, metadata)
+                VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                ON CONFLICT (source, content_hash)
+                DO UPDATE SET
+                    summary    = $3,
+                    full_text  = $4,
+                    embedding  = $5,
+                    metadata   = $6::jsonb,
+                    created_at = NOW()
+                """,
+                source,
+                content_hash,
+                summary,
+                full_text or "",
+                embedding,  # list[float] → pgvector 编码器自动转为 vector
+                json.dumps(metadata or {}),
+            )
+        return content_hash
+
+    # ---- 读 ----
+
+    async def search(
+        self,
+        query: str,
+        source: str = "default",
+        top_k: int = 3,
+        min_score: float = 0.3,
+    ) -> List[Dict[str, Any]]:
+        """
+        语义检索
+
+        参数：
+          query: 用户当前输入
+          source: 用户隔离
+          top_k: 返回条数
+          min_score: 相似度阈值（余弦相似度 0-1，越大越严格）
+
+        返回：
+          [{"summary": str, "score": float, "metadata": dict}, ...]
+
+        score 解读（余弦相似度 = 1 - 余弦距离）：
+          0.9+  → 高度相关
+          0.7-0.9 → 相关，可作上下文补充
+          0.5-0.7 → 弱相关，不建议注入
+          <0.5  → 不相关
+        """
+        query_embedding = await self._embed(query, is_query=True)
+
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    summary,
+                    metadata,
+                    1 - (embedding <=> $1) AS score
+                FROM memory_vectors
+                WHERE source = $2
+                  AND 1 - (embedding <=> $1) >= $3
+                ORDER BY embedding <=> $1
+                LIMIT $4
+                """,
+                query_embedding,  # list[float] → vector
+                source,
+                min_score,
+                top_k,
+            )
+
+        return [
+            {
+                "summary": row["summary"],
+                "score": round(row["score"], 4),
+                "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
+            }
+            for row in rows
+        ]
+
+    # ---- 统计 ----
+
+    async def count(self, source: Optional[str] = None) -> int:
+        """返回记忆条数（可按 source 过滤）"""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            if source is not None:
+                return await conn.fetchval(
+                    "SELECT count(*) FROM memory_vectors WHERE source = $1",
+                    source,
+                )
+            return await conn.fetchval("SELECT count(*) FROM memory_vectors")
+
+    # ---- Embedding ----
+
+    async def _embed(self, text: str, is_query: bool = False) -> List[float]:
+        """
+        文本 → 向量（默认 BGE-M3，可插拔 embed_fn）
+
+        is_query=True 时（检索查询）走 BGE-M3 查询前缀分支；
+        自定义 embed_fn 不感知该标志（直接传 text），保持向后兼容。
+        """
+        if self._embed_fn is not None:
+            out = self._embed_fn(text)
+        else:
+            out = await bge_m3_embed(text, is_query=is_query)
+        # 兼容同步函数（返回 list）与异步函数（返回 coroutine）
+        if asyncio.iscoroutine(out):
+            out = await out
+        return out
+
+    # ---- 工具 ----
+
+    @staticmethod
+    def _hash(text: str) -> str:
+        """对文本取 sha256 前 24 位作内容哈希，用于去重主键（content_hash）。"""
+        return hashlib.sha256(text.encode()).hexdigest()[:24]
+
+    # ---- 生命周期 ----
+
+    async def close(self) -> None:
+        """释放连接池"""
+        if self._pool:
+            await self._pool.close()
+            self._pool = None
+            self._table_ready = False
