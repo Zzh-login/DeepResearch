@@ -53,3 +53,9 @@ Thumbs.db
 # 内部工作记忆（Agent 私有，非项目代码）
 # ────────────────────────────────
 .workbuddy/
+# 开发草稿 / 探针文件（不进版本库）
+code_review_report.md
+vector_repo_async_fix_plan.md
+web_multiuser_isolation_design.md
+verify_persona_fix.py
+verify_vector_memory.py

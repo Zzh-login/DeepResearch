@@ -17,9 +17,9 @@ import uvicorn
 from interfaces.web.app import app
 
 if __name__ == "__main__":
-    # 启动逻辑：从环境变量读取监听地址与端口（默认值 127.0.0.1:5001），
+    # 启动逻辑：从环境变量读取监听地址与端口（默认值 127.0.0.1:5001），00
     # 调用 uvicorn.run 以单进程阻塞方式启动已导入的 FastAPI 应用 app，
     # 进程持续运行直至被手动终止或异常退出。
     host = os.getenv("SERVER_HOST", "127.0.0.1")
-    port = int(os.getenv("SERVER_PORT", "5001"))
+    port = int(os.getenv("SERVER_PORT", "5000"))
     uvicorn.run(app, host=host, port=port)

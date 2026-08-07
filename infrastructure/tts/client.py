@@ -152,8 +152,11 @@ class TTSClient:
                 resp = await client.post(
                     "https://openspeech.bytedance.com/api/v1/tts",
                     json=payload,
-                    headers={"Authorization": f"Bearer;{self._access_token}"},
+                    headers={"Authorization": f"Bearer; {self._access_token}"},
                 )
+                if resp.status_code != 200:
+                    # 把火山引擎返回的真实错误原因打出来，方便排查 400/401 等
+                    print(f"[TTSClient] HTTP {resp.status_code} 响应体: {resp.text}")
                 resp.raise_for_status()
                 result = resp.json()
 

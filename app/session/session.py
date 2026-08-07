@@ -40,8 +40,9 @@ from infrastructure.tts.client import TTSClient
 
 # Agent 能力（Step 5：决策层 + 工具系统）
 from .context_builder import ContextBuilder
-from .agent_runner import AgentRunner
-from .pipeline import Pipeline
+# 阶段2 核心改造：LangGraph 决策图引擎（替代 Pipeline / AgentRunner 的对话生成）
+from .graph import GraphAgent
+from infrastructure.tools.langchain_tools import build_graph_tools
 from infrastructure.tools.registry import ToolRegistry
 from infrastructure.tools.get_time import GetCurrentTimeTool
 from infrastructure.tools.recall_memory import RecallMemoryTool
@@ -64,7 +65,7 @@ class ChatSession:
       - 不校验输出（交给 Validator）
 
     ── 生命周期 ──
-      __init__ → _load() → chat() 循环 → close()
+      __init__ → _load() → chat_stream() 循环 → close()
     """
 
     def __init__(
@@ -129,10 +130,18 @@ class ChatSession:
         self._tool_registry.register(
             RecallMemoryTool(vector_memory=self._vector_memory, source=self._source)
         )
-        # 子组件：上下文构建 / Agent 运行 / 六层管道
+        # 联网检索能力（含 P0 清洗/溯源两道闸，详见 infrastructure/tools/web_search.py）
+        from infrastructure.tools.web_search import WebSearchTool
+        self._tool_registry.register(WebSearchTool())
+        # 子组件：上下文构建
         self._context_builder = ContextBuilder(self._builder)
-        self._agent_runner = AgentRunner(self._llm, self._tool_registry, agent_mode=self._agent_mode)
-        self._pipeline = Pipeline(self._context_builder, self._agent_runner, self._validator)
+
+        # LangGraph 决策图（阶段2：替代旧 Pipeline/AgentRunner 的对话生成引擎）
+        self._graph = GraphAgent(
+            tools=build_graph_tools(self._tool_registry),
+            context_builder=self._context_builder,
+            agent_mode=self._agent_mode,
+        )
 
         # 运行时状态
         self._custom_persona: Optional[str] = None
@@ -191,7 +200,7 @@ class ChatSession:
         """
         刷新 system 消息
 
-        每次 chat() 前调用，确保 history[0] 的 system 消息
+        每次请求前调用，确保 history[0] 的 system 消息
         与当前角色一致（角色可能在两次 chat 之间被改过）。
         """
         persona = self._get_effective_persona()
@@ -203,85 +212,6 @@ class ChatSession:
     # 核心：对话
     # ════════════════════════════════════════════════════════
 
-    async def chat(
-        self,
-        user_text: str,
-        user_id: str = "default",
-        include_vector: bool = False,
-        skip_tts: bool = False,
-    ) -> Dict[str, Any]:
-        """
-        一次对话轮次
-
-        流程：
-          1. 刷新 system（_refresh_persona）
-          2. PromptBuilder 拼装 → system_prompt, messages
-          3. 用户消息加入历史
-          4. LLM 调用 → 原始回复
-          5. 助手消息加入历史
-          6. Validator 校验 + 兜底 → 最终回复
-          7. 持久化历史
-          8. TTS 合成（可选）
-          9. 返回 {"reply", "audio", "tokens"}
-
-        为什么先拼装再调 LLM 而不是反过来：
-          拼装需要历史作为输入，所以调 LLM 之前拼装。
-          Validator 在 LLM 之后、展示之前，所以调完 LLM 后校验。
-
-        架构意义：
-          这 8 步是"编排"而非"实现"。每一行都是"干什么"而不是"怎么干"。
-          这就是 session 作为流程编排层的核心设计。
-        """
-        # 同一会话可能被并发调用（同一用户开多个标签页），
-        # 用锁串行化对 history 的读写，避免对话记录错乱。
-        async with self._lock:
-            # 1. 刷新 system 消息
-            self._refresh_persona()
-
-            # 2-6. 拼装 prompt → Agent 运行（含工具循环）→ 校验
-            #       统一交给 Pipeline；build 在内部先读 history 拼装、再于末尾
-            #       追加 user_input，所以此处必须等 Pipeline 返回后再写用户消息到 history
-            include_vector = self._vector_memory is not None
-            try:
-                final_reply, finish_reason, raw_reply = await self._pipeline.generate(
-                    user_text=user_text,
-                    history=self._history,
-                    user_id=user_id,
-                    include_vector=include_vector,
-                    persona_override=self._get_effective_persona(),
-                )
-            except Exception as e:
-                # 生成失败时，将错误反馈给用户（不中断连接）
-                error_msg = f"对话生成失败：{e}"
-                self._memory.add_message(self._history, AssistantMessage(content=error_msg))
-                self._memory.save(self._history, self._source)
-                return {"reply": error_msg, "audio": "", "error": str(e)}
-
-            # 3. 用户消息加入历史
-            self._memory.add_message(self._history, UserMessage(content=user_text))
-
-            # 5. 助手回复加入历史
-            self._memory.add_message(self._history, AssistantMessage(content=final_reply))
-
-            # 7. 持久化历史
-            self._memory.save(self._history, self._source)
-
-            # 7.5 双轨记忆 · 计算本轮被 trim 淘汰的轮次（锁内快照，锁外异步压缩）
-            # 必须在锁内算好，避免并发 chat 时 self._history 被改写导致重复 / 漏压缩
-            evicted_turns = self._compute_evicted_turns()
-
-        # 淘汰即压缩：把被丢掉的旧对话交给 reducer 折叠进滚动摘要（不阻塞回复）
-        if evicted_turns:
-            asyncio.create_task(self._reduce_and_archive(evicted_turns))
-
-        asyncio.create_task(self._extractor.extract(user_text, final_reply, source=self._source))
-
-        # 8. TTS 合成（锁外执行，避免持锁过久；TTS 模块内部有缓存，相同文本直接返回）
-        audio = "" if skip_tts else await self._tts.synthesize(final_reply)
-
-        # 9. 返回
-        return {"reply": final_reply, "audio": audio, "error": ""}
-
     async def chat_stream(
         self,
         user_text: str,
@@ -289,13 +219,13 @@ class ChatSession:
         include_vector: bool = False,
     ):
         """
-        流式对话轮次 —— 与 chat() 的流式版，用于 Web 端推实时打字机效果。
+        流式对话轮次 —— Web 端实时打字机效果的核心入口。
 
         流程：
-          1-3 步与 chat() 完全相同（拼装 prompt + 用户消息写入）
-          4'. LLM 流式生成 → 逐 token yield {"type":"token","text":"..."}
-          5-7 步同 chat()（写入历史 + Validator + 存盘 + 双轨压缩）
-          最后 yield {"type":"done","text":final_reply}
+          1. 刷新 persona + 流式生成
+          2. 流式生成 → 逐 token yield {"type":"token","text":"..."}
+          3. 写入历史 + Validator 校验 + 存盘 + 双轨压缩
+          最后 yield {"type":"done","text":final_reply, "error":""}
 
         返回值是异步生成器，不是 Dict：
             async for event in session.chat_stream(user_text):
@@ -319,7 +249,7 @@ class ChatSession:
             #       所以用户/助手消息在生成结束后再写入 history（避免重复）
             full_text = ""
             try:
-                async for token in self._pipeline.generate_stream(
+                async for token in self._graph.generate_stream(
                     user_text=user_text,
                     history=self._history,
                     user_id=user_id,
@@ -364,7 +294,7 @@ class ChatSession:
           相当于一键回退到「无 Agent」状态，便于排查问题。
         """
         self._agent_mode = on
-        self._agent_runner.set_agent_mode(on)
+        self._graph.set_agent_mode(on)
 
     # ════════════════════════════════════════════════════════
     # 双轨记忆 · 温层（滚动摘要）

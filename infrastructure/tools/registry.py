@@ -51,6 +51,12 @@ class ToolRegistry:
         """返回所有工具的 OpenAI function schema 列表（供 LLM tools 参数）"""
         return [t.to_openai_schema() for t in self._tools.values()]
 
+    def capabilities(self) -> Dict[str, str]:
+        # Keep the mapping at the registry boundary so the domain layer does
+        # not need to know concrete Tool implementations.
+        """Return semantic capabilities declared by registered tools."""
+        return {name: tool.capability for name, tool in self._tools.items() if tool.capability}
+
     async def execute(self, name: str, arguments: Dict[str, Any]) -> str:
         """
         执行指定工具

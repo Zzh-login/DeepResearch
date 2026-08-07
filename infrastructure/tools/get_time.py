@@ -18,6 +18,8 @@ class GetCurrentTimeTool(Tool):
     """获取当前日期、星期与时间的工具"""
 
     name = "get_current_time"
+    # PolicyGuard looks up this capability instead of hard-coding the tool name.
+    capability = "current_time"
     description = (
         "获取当前的日期、时间和星期。当用户询问现在几点、今天几号、"
         "星期几、当前日期等与时间相关的问题时使用。"

@@ -34,6 +34,8 @@ class Tool(ABC):
     name: str = ""
     description: str = ""
     parameters: Dict[str, Any] = {"type": "object", "properties": {}}
+    # A stable business capability, independent from the concrete tool name.
+    capability: str = ""
 
     @abstractmethod
     async def run(self, **kwargs) -> str:
