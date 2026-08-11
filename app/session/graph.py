@@ -43,7 +43,6 @@ class State(TypedDict):
 
     messages: Annotated[list, add_messages]
 
-
 class GraphAgent:
     """基于 LangGraph 的对话生成引擎，对外暴露 generate_stream 流式入口。"""
 
@@ -51,22 +50,19 @@ class GraphAgent:
         self,
         tools: list,
         context_builder: ContextBuilder,
+        settings,                                  # ← 新增：由外部注入
         agent_mode: bool = True,
         temperature: float = 0.7,
         max_tokens: int = 2048,
     ):
         self._context_builder = context_builder
         self._agent_mode = agent_mode
-
-        api_key = os.getenv("DEEPSEEK_API_KEY", "")
-        # .env 未显式设置时给稳妥默认值（已核实 .env 只有 DEEPSEEK_API_KEY）
-        base_url = os.getenv("DEEPSEEK_BASE_URL") or DEFAULT_BASE_URL
-        model = os.getenv("DEEPSEEK_MODEL") or DEFAULT_MODEL
+        self._settings = settings                   # ← 现在 settings 是参数，合法了
 
         self._model = ChatOpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_base_url,
+            model=settings.deepseek_model,
             temperature=temperature,
             max_tokens=max_tokens,
             streaming=True,

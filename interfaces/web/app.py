@@ -13,40 +13,86 @@ from infrastructure.auth.user_repo import UserRepository
 from infrastructure.auth.jwt_handler import create_token, verify_token
 from infrastructure.auth.dependency import get_current_user
 from interfaces.web.session_manager import SessionManager
+from interfaces.web.knowledge_routes import router as knowledge_router
 
-app = FastAPI()
+from infrastructure.config.settings import get_settings
+from infrastructure.database.postgres import PostgresDatabase
+from infrastructure.embedding.bge_m3 import warmup as warmup_bge_m3
+
+from contextlib import asynccontextmanager
+
+
+async def _warmup_embedding() -> None:
+    """Warm the local embedding model without making app startup depend on it."""
+    try:
+        await warmup_bge_m3()
+        print("[Warmup] BGE-M3 model loaded successfully")
+    except Exception as exc:
+        print(f"[Warmup] BGE-M3 preload failed; lazy loading remains available: {exc}")
+
+
+async def _warmup_asr(app: FastAPI) -> None:
+    """Load ASR in the background and keep the rest of the app available."""
+    app.state.asr_status = "loading"
+    app.state.asr_error = None
+    try:
+        await asyncio.to_thread(load_model)
+        app.state.asr_status = "ok"
+        print("[Warmup] ASR model loaded successfully")
+    except Exception as exc:
+        app.state.asr_status = "degraded"
+        app.state.asr_error = str(exc)
+        print(f"[Warmup] ASR preload failed; text features remain available: {exc}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    database = PostgresDatabase(settings.pg_dsn)
+    warmup_tasks = []
+    manager_started = False
+
+    try:
+        await database.connect()
+        app.state.database_status = "ok"
+        app.state.database_error = None
+    except Exception as exc:
+        database.pool = None
+        app.state.database_status = "degraded"
+        app.state.database_error = str(exc)
+        print(f"[Database] unavailable, degraded mode: {exc}")
+
+    app.state.database = database
+
+    try:
+        manager.start()
+        manager_started = True
+        warmup_tasks = [
+            asyncio.create_task(_warmup_embedding()),
+            asyncio.create_task(_warmup_asr(app)),
+        ]
+        yield
+    finally:
+        if manager_started:
+            await manager.stop()
+        for task in warmup_tasks:
+            if not task.done():
+                task.cancel()
+        if warmup_tasks:
+            await asyncio.gather(*warmup_tasks, return_exceptions=True)
+        await database.close()
+
+app = FastAPI(lifespan=lifespan)
 
 manager = SessionManager()
 user_repo = UserRepository()
 
 
-@app.on_event("startup")
-async def startup():
-    """应用启动钩子：加载 ASR 模型、启动会话管理器与 BGE-M3 后台预热任务。"""
-    load_model()
-    manager.start()
-    # 预热 BGE-M3 模型（后台加载，不阻塞启动；加载完后首次 search 秒回）
-    asyncio.create_task(_warmup_bge_m3())
-
-
-async def _warmup_bge_m3():
-    """后台预加载 BGE-M3 模型，避免首次搜索时阻塞事件循环"""
-    try:
-        from infrastructure.memory.vector_repo import _load_bge_m3
-        await asyncio.to_thread(_load_bge_m3)
-        print("[Warmup] BGE-M3 model loaded successfully")
-    except Exception as e:
-        print(f"[Warmup] BGE-M3 preload failed (will lazy-load on first search): {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """应用关闭钩子：停止会话管理后台任务并释放所有在线会话资源。"""
-    await manager.stop()
-
-
 frontend_dir = Path(__file__).parent / "frontend"
 app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
+
+# 注册知识库 REST API 路由
+app.include_router(knowledge_router)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -57,6 +103,10 @@ app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
 async def refresh_token_cookie(request: Request, call_next):
     """HTTP 中间件：对成功（2xx）响应刷新 JWT cookie，使活跃用户会话永不过期。"""
     response = await call_next(request)
+
+    # 退出接口负责删除 token。此处如果续期，会把刚删除的 Cookie 重新写回。
+    if request.url.path == "/auth/logout":
+        return response
 
     # 只对成功（2xx）响应刷新 token
     if 200 <= response.status_code < 300:
@@ -83,10 +133,38 @@ async def refresh_token_cookie(request: Request, call_next):
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/health")
-async def health():
-    """健康检查接口，返回 {"status": "ok"} 供探活/负载均衡使用。"""
-    return {"status": "ok"}
+async def health(request: Request):
+    database = request.app.state.database
 
+    if database.pool is None:
+        return JSONResponse(
+            {
+                "status": "degraded",
+                "postgres": "unavailable",
+                "error": request.app.state.database_error,
+            },
+            status_code=200,
+        )
+
+    try:
+        async with database.pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+            has_vector = await conn.fetchval(
+                "SELECT EXISTS("
+                "SELECT 1 FROM pg_extension WHERE extname = 'vector'"
+                ")"
+            )
+
+        return {
+            "status": "ok",
+            "postgres": "ok",
+            "pgvector": "ok" if has_vector else "missing",
+        }
+    except Exception as exc:
+        return JSONResponse(
+            {"status": "degraded", "postgres": "error", "error": str(exc)},
+            status_code=200,
+        )
 
 @app.get("/")
 async def root():
@@ -152,7 +230,7 @@ async def auth_login(request: Request):
 async def auth_logout():
     """退出登录：清除客户端的 token cookie。"""
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie("token", path="/")
+    resp.delete_cookie("token", path="/", samesite="lax")
     return resp
 
 

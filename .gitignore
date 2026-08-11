@@ -40,6 +40,8 @@ data/users/*
 !data/users/.gitkeep
 data/*.json
 data/*.db
+data/knowledge/*
+!data/knowledge/.gitkeep
 
 # ────────────────────────────────
 # 编辑器 / 系统

@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>知识库检索测试</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 860px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #4A90D9;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #e0e6ed;
+        }
+
+        /* ── 通用卡片 ── */
+        .card {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            padding: 18px 22px;
+            margin-bottom: 18px;
+        }
+        .card-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        /* ── 通用控件 ── */
+        input[type="text"], input[type="file"] {
+            padding: 9px 12px;
+            border: 1px solid #d0d5dd;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+            color: #333;
+            background: #fff;
+        }
+        input[type="text"]:focus { border-color: #4A90D9; }
+
+        .btn {
+            padding: 9px 18px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+        .btn-primary {
+            background: #4A90D9;
+            color: #fff;
+        }
+        .btn-primary:hover { background: #3a7bc8; }
+        .btn-primary:disabled {
+            background: #b0cce8;
+            cursor: not-allowed;
+        }
+        .btn-danger {
+            background: transparent;
+            color: #e74c3c;
+            border: 1px solid #e74c3c;
+            padding: 4px 12px;
+            font-size: 12px;
+            border-radius: 4px;
+        }
+        .btn-danger:hover { background: #fde8e8; }
+
+        /* ── 行布局 ── */
+        .row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .row input[type="text"] { flex: 1; min-width: 160px; }
+
+        /* ── 知识库列表 ── */
+        .kb-list { display: flex; flex-direction: column; gap: 4px; }
+        .kb-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+            border: 1px solid transparent;
+        }
+        .kb-item:hover { background: #f0f5fb; }
+        .kb-item.selected {
+            background: #e8f0fb;
+            border-color: #4A90D9;
+        }
+        .kb-radio {
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            border: 2px solid #ccc;
+            flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .kb-item.selected .kb-radio {
+            border-color: #4A90D9;
+        }
+        .kb-item.selected .kb-radio::after {
+            content: "";
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #4A90D9;
+        }
+        .kb-name { flex: 1; font-size: 14px; color: #333; }
+        .kb-desc { font-size: 12px; color: #999; margin-left: 8px; }
+        .kb-delete-btn {
+            width: 52px;
+            height: 28px;
+            flex: 0 0 52px;
+            border: 1px solid #e74c3c;
+            border-radius: 4px;
+            background: #fff;
+            color: #d9363e;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .kb-delete-btn:hover { background: #fde8e8; }
+        .kb-delete-btn:disabled { opacity: 0.55; cursor: wait; }
+
+        @media (max-width: 600px) {
+            .kb-item {
+                display: grid;
+                grid-template-columns: 16px minmax(0, 1fr) 52px;
+                column-gap: 10px;
+                row-gap: 4px;
+            }
+            .kb-radio { grid-column: 1; grid-row: 1; }
+            .kb-name { grid-column: 2; grid-row: 1; min-width: 0; }
+            .kb-delete-btn { grid-column: 3; grid-row: 1; }
+            .kb-desc {
+                grid-column: 2 / 4;
+                grid-row: 2;
+                margin-left: 0;
+                overflow-wrap: anywhere;
+            }
+        }
+
+        /* ── 文档列表表格 ── */
+        .doc-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .doc-table th {
+            text-align: left;
+            padding: 8px 10px;
+            background: #f8f9fb;
+            color: #666;
+            font-weight: 600;
+            border-bottom: 1px solid #e0e6ed;
+        }
+        .doc-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #f0f0f0;
+            color: #333;
+        }
+        .doc-table tr:hover td { background: #fafbfc; }
+
+        .status-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .status-uploaded  { background: #e8e8e8; color: #666; }
+        .status-parsing   { background: #dbeafe; color: #2563eb; }
+        .status-indexing  { background: #fff3e0; color: #e67e22; }
+        .status-ready     { background: #dcfce7; color: #16a34a; }
+        .status-failed    { background: #fee2e2; color: #dc2626; }
+
+        .doc-empty {
+            text-align: center;
+            color: #aaa;
+            padding: 20px 0;
+            font-size: 13px;
+        }
+
+        /* ── 搜索结果 ── */
+        .search-result {
+            border: 1px solid #e8ecf0;
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+        }
+        .search-result:hover { border-color: #c0d0e0; }
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+        .result-score {
+            font-size: 18px;
+            font-weight: 700;
+            color: #4A90D9;
+        }
+        .result-meta {
+            font-size: 12px;
+            color: #888;
+        }
+        .result-meta span {
+            margin-right: 10px;
+        }
+        .result-content {
+            font-size: 13px;
+            color: #444;
+            line-height: 1.65;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .search-empty {
+            text-align: center;
+            color: #aaa;
+            padding: 24px 0;
+            font-size: 13px;
+        }
+
+        /* ── 预设问题 ── */
+        .preset-questions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .preset-q {
+            display: inline-block;
+            padding: 5px 12px;
+            background: #f0f5fb;
+            color: #4A90D9;
+            border-radius: 14px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+            border: 1px solid transparent;
+        }
+        .preset-q:hover {
+            background: #dce8f5;
+            border-color: #4A90D9;
+        }
+
+        /* ── Toast ── */
+        .toast {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 22px;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            z-index: 1000;
+            animation: toastIn 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .toast-error { background: #e74c3c; }
+        .toast-success { background: #27ae60; }
+        .toast-info { background: #4A90D9; }
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+            to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📚 知识库检索测试</h1>
+
+    <!-- ── 创建知识库 ── -->
+    <div class="card">
+        <div class="card-title">创建知识库</div>
+        <div class="row">
+            <input type="text" id="kbNameInput" placeholder="知识库名称" style="max-width:240px;">
+            <input type="text" id="kbDescInput" placeholder="描述（可选）" style="flex:2;">
+            <button class="btn btn-primary" id="createKbBtn" onclick="createKnowledgeBase()">创建</button>
+        </div>
+    </div>
+
+    <!-- ── 知识库列表 ── -->
+    <div class="card">
+        <div class="card-title">
+            知识库列表
+            <button class="btn btn-primary" style="float:right;padding:4px 14px;font-size:12px;" onclick="refreshKbList()">刷新</button>
+        </div>
+        <div class="kb-list" id="kbList">
+            <div class="doc-empty">加载中...</div>
+        </div>
+    </div>
+
+    <!-- ── 上传文档 ── -->
+    <div class="card">
+        <div class="card-title">上传文档 <span style="font-weight:400;font-size:12px;color:#999;" id="uploadHint">（选中知识库后可用）</span></div>
+        <div class="row">
+            <input type="file" id="fileInput" accept=".txt,.md,.markdown,.pdf,.docx" disabled>
+            <button class="btn btn-primary" id="uploadBtn" disabled onclick="uploadDocument()">上传</button>
+        </div>
+    </div>
+
+    <!-- ── 文档列表（自动刷新） ── -->
+    <div class="card">
+        <div class="card-title" id="docListTitle">文档列表</div>
+        <div id="docListContainer">
+            <div class="doc-empty">请先选择知识库</div>
+        </div>
+        <div id="docRefreshInfo" style="font-size:11px;color:#aaa;margin-top:8px;display:none;"></div>
+    </div>
+
+    <!-- ── 检索测试 ── -->
+    <div class="card">
+        <div class="card-title">检索测试</div>
+
+        <!-- 预设问题 -->
+        <div style="margin-bottom:12px;">
+            <div style="font-size:12px;color:#888;margin-bottom:6px;">点击预设问题自动填入：</div>
+            <div class="preset-questions" id="presetQuestions"></div>
+        </div>
+
+        <!-- 搜索栏 -->
+        <div class="row" style="margin-bottom:14px;">
+            <input type="text" id="searchQuery" placeholder="输入检索问题..." style="flex:1;">
+            <button class="btn btn-primary" id="searchBtn" onclick="doSearch()">搜索</button>
+        </div>
+
+        <!-- 搜索结果 -->
+        <div id="searchResults">
+            <div class="search-empty">输入问题后点击搜索，查看检索结果</div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ==================== 预设测试问题 ====================
+const TEST_QUESTIONS = [
+    "监督学习和无监督学习有什么区别？",
+    "ReLU激活函数的特点是什么？",
+    "Transformer架构中的自注意力机制如何工作？",
+    "BERT和GPT的主要区别是什么？",
+    "CNN中的卷积层有什么作用？",
+    "什么是过拟合？如何解决？",
+    "数据标准化的目的是什么？",
+    "LSTM如何解决RNN的梯度消失问题？",
+    "迁移学习有哪两种主要方法？",
+    "AI伦理面临的三大挑战是什么？",
+];
+
+// ==================== 状态 ====================
+let selectedKbId = null;
+let knowledgeBases = [];
+let docPollTimer = null;
+
+// ==================== DOM 引用 ====================
+const kbNameInput = document.getElementById("kbNameInput");
+const kbDescInput = document.getElementById("kbDescInput");
+const kbListEl = document.getElementById("kbList");
+const fileInput = document.getElementById("fileInput");
+const uploadBtn = document.getElementById("uploadBtn");
+const uploadHint = document.getElementById("uploadHint");
+const docListTitle = document.getElementById("docListTitle");
+const docListContainer = document.getElementById("docListContainer");
+const docRefreshInfo = document.getElementById("docRefreshInfo");
+const searchQuery = document.getElementById("searchQuery");
+const searchBtn = document.getElementById("searchBtn");
+const searchResults = document.getElementById("searchResults");
+const presetQuestions = document.getElementById("presetQuestions");
+
+// ==================== 初始化 ====================
+function init() {
+    // 渲染预设问题
+    presetQuestions.innerHTML = TEST_QUESTIONS.map((q, i) =>
+        `<span class="preset-q" onclick="selectPresetQuestion(${i})">${escapeHtml(q)}</span>`
+    ).join("");
+
+    // Enter 快捷搜索
+    searchQuery.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") doSearch();
+    });
+
+    // 加载知识库列表
+    refreshKbList();
+}
+
+function selectPresetQuestion(idx) {
+    searchQuery.value = TEST_QUESTIONS[idx];
+    searchQuery.focus();
+    doSearch();
+}
+
+// ==================== Toast ====================
+function showToast(msg, type) {
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${type || "info"}`;
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// ==================== API 封装 ====================
+async function api(method, url, body) {
+    const opts = {
+        method,
+        headers: {},
+        credentials: "include",
+    };
+    if (body && !(body instanceof FormData)) {
+        opts.headers["Content-Type"] = "application/json";
+        opts.body = JSON.stringify(body);
+    } else if (body instanceof FormData) {
+        opts.body = body;
+    }
+    const resp = await fetch(url, opts);
+    if (resp.status === 401) {
+        window.location.href = "/login";
+        throw new Error("未登录");
+    }
+    return resp;
+}
+
+// ==================== 知识库列表 ====================
+async function refreshKbList() {
+    try {
+        const resp = await api("GET", "/api/knowledge-bases");
+        knowledgeBases = await resp.json();
+        renderKbList();
+        // 如果之前有选中但已被删除，清除选中
+        if (selectedKbId && !knowledgeBases.find(kb => kb.id === selectedKbId)) {
+            selectKb(null);
+        }
+        // 如果还有选中的 KB 且列表没变，保留选中状态
+        if (selectedKbId) {
+            renderKbList(); // 重新渲染以恢复选中标记
+        }
+    } catch (e) {
+        showToast("加载知识库列表失败: " + e.message, "error");
+    }
+}
+
+function renderKbList() {
+    if (knowledgeBases.length === 0) {
+        kbListEl.innerHTML = '<div class="doc-empty">暂无知识库，请先创建</div>';
+        return;
+    }
+    kbListEl.innerHTML = knowledgeBases.map(kb => `
+        <div class="kb-item ${kb.id === selectedKbId ? 'selected' : ''}" onclick="selectKb('${kb.id}')">
+            <div class="kb-radio"></div>
+            <span class="kb-name">${escapeHtml(kb.name)}</span>
+            ${kb.description ? `<span class="kb-desc">${escapeHtml(kb.description)}</span>` : ""}
+            <button
+                type="button"
+                class="kb-delete-btn"
+                data-delete-kb-id="${kb.id}"
+                title="删除知识库"
+                onclick="event.stopPropagation(); deleteKnowledgeBase('${kb.id}')"
+            >删除</button>
+        </div>
+    `).join("");
+}
+
+function selectKb(kbId) {
+    selectedKbId = kbId;
+    renderKbList();
+
+    if (kbId) {
+        fileInput.disabled = false;
+        uploadBtn.disabled = false;
+        const kb = knowledgeBases.find(k => k.id === kbId);
+        uploadHint.textContent = `（当前知识库: ${kb ? kb.name : kbId}）`;
+        docListTitle.textContent = `文档列表 — ${kb ? kb.name : kbId}`;
+        refreshDocList();
+        startDocPolling();
+    } else {
+        fileInput.disabled = true;
+        uploadBtn.disabled = true;
+        uploadHint.textContent = "（选中知识库后可用）";
+        docListTitle.textContent = "文档列表";
+        docListContainer.innerHTML = '<div class="doc-empty">请先选择知识库</div>';
+        docRefreshInfo.style.display = "none";
+        stopDocPolling();
+    }
+}
+
+// ==================== 创建知识库 ====================
+async function createKnowledgeBase() {
+    const name = kbNameInput.value.trim();
+    if (!name) {
+        showToast("请输入知识库名称", "error");
+        return;
+    }
+    const description = kbDescInput.value.trim();
+    try {
+        const resp = await api("POST", "/api/knowledge-bases", { name, description });
+        if (!resp.ok) {
+            const data = await resp.json();
+            throw new Error(data.detail || "创建失败");
+        }
+        const created = await resp.json();
+        showToast(`知识库 "${created.name}" 创建成功`, "success");
+        kbNameInput.value = "";
+        kbDescInput.value = "";
+        await refreshKbList();
+        // 自动选中新创建的知识库
+        selectKb(created.id);
+    } catch (e) {
+        showToast("创建失败: " + e.message, "error");
+    }
+}
+
+async function deleteKnowledgeBase(kbId) {
+    const kb = knowledgeBases.find(item => item.id === kbId);
+    if (!kb) {
+        showToast("知识库不存在，请刷新列表", "error");
+        return;
+    }
+
+    const confirmation = prompt(
+        `删除知识库会同时删除全部文档和向量，且无法恢复。\n\n请输入知识库名称确认：\n${kb.name}`
+    );
+    if (confirmation === null) return;
+    if (confirmation.trim() !== kb.name) {
+        showToast("知识库名称不一致，已取消删除", "error");
+        return;
+    }
+
+    const button = document.querySelector(`[data-delete-kb-id="${kbId}"]`);
+    if (button) button.disabled = true;
+    if (selectedKbId === kbId) stopDocPolling();
+
+    try {
+        const resp = await api("DELETE", `/api/knowledge-bases/${kbId}`);
+        const result = await resp.json();
+        if (!resp.ok) {
+            throw new Error(result.detail || "删除失败");
+        }
+
+        if (selectedKbId === kbId) {
+            selectKb(null);
+            searchResults.innerHTML = '<div class="search-empty">输入问题后点击搜索，查看检索结果</div>';
+        }
+
+        await refreshKbList();
+        if (result.cleanup_failed > 0) {
+            showToast(`知识库已删除，但有 ${result.cleanup_failed} 个磁盘文件清理失败`, "error");
+        } else {
+            showToast(`知识库 "${kb.name}" 已删除`, "success");
+        }
+    } catch (e) {
+        showToast("删除失败: " + e.message, "error");
+        if (selectedKbId === kbId) startDocPolling();
+        if (button) button.disabled = false;
+    }
+}
+
+// ==================== 上传文档 ====================
+async function uploadDocument() {
+    if (!selectedKbId) return;
+    const file = fileInput.files[0];
+    if (!file) {
+        showToast("请先选择文件", "error");
+        return;
+    }
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+        const resp = await api("POST", `/api/knowledge-bases/${selectedKbId}/documents`, formData);
+        if (!resp.ok) {
+            const data = await resp.json();
+            throw new Error(data.detail || "上传失败");
+        }
+        const result = await resp.json();
+        showToast(`上传成功 (${result.status})`, "success");
+        fileInput.value = "";
+        refreshDocList();
+    } catch (e) {
+        showToast("上传失败: " + e.message, "error");
+    }
+}
+
+// ==================== 文档列表 + 自动刷新 ====================
+async function refreshDocList() {
+    if (!selectedKbId) return;
+    try {
+        const resp = await api("GET", `/api/knowledge-bases/${selectedKbId}/documents`);
+        const docs = await resp.json();
+        renderDocList(docs);
+
+        // 检查是否所有文档都已稳定（ready/failed）
+        const allSettled = docs.every(d => d.status === "ready" || d.status === "failed");
+        if (allSettled && docs.length > 0) {
+            stopDocPolling();
+            docRefreshInfo.textContent = "所有文档处理完成，轮询已停止";
+            docRefreshInfo.style.display = "block";
+        } else if (docs.length > 0) {
+            docRefreshInfo.textContent = "每 3 秒自动刷新（检测文档状态...）";
+            docRefreshInfo.style.display = "block";
+        }
+    } catch (e) {
+        docListContainer.innerHTML = '<div class="doc-empty">加载失败</div>';
+    }
+}
+
+function renderDocList(docs) {
+    if (!docs || docs.length === 0) {
+        docListContainer.innerHTML = '<div class="doc-empty">暂无文档，请上传文件</div>';
+        return;
+    }
+    const rows = docs.map(d => `
+        <tr>
+            <td>${escapeHtml(d.filename)}</td>
+            <td><span class="status-badge status-${d.status}">${d.status}</span></td>
+            <td>${formatSize(d.file_size)}</td>
+            <td><button class="btn-danger" onclick="deleteDocument('${d.id}')">× 删除</button></td>
+        </tr>
+    `).join("");
+
+    docListContainer.innerHTML = `
+        <table class="doc-table">
+            <thead>
+                <tr>
+                    <th>文件名</th>
+                    <th>状态</th>
+                    <th>大小</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
+    `;
+}
+
+function startDocPolling() {
+    stopDocPolling();
+    docPollTimer = setInterval(refreshDocList, 3000);
+}
+
+function stopDocPolling() {
+    if (docPollTimer) {
+        clearInterval(docPollTimer);
+        docPollTimer = null;
+    }
+}
+
+async function deleteDocument(docId) {
+    if (!confirm("确定删除此文档？")) return;
+    try {
+        const resp = await api("DELETE", `/api/documents/${docId}`);
+        if (!resp.ok) {
+            const data = await resp.json();
+            throw new Error(data.detail || "删除失败");
+        }
+        showToast("文档已删除", "success");
+        refreshDocList();
+    } catch (e) {
+        showToast("删除失败: " + e.message, "error");
+    }
+}
+
+// ==================== 检索 ====================
+async function doSearch() {
+    const query = searchQuery.value.trim();
+    if (!query) {
+        showToast("请输入检索问题", "error");
+        return;
+    }
+    if (!selectedKbId) {
+        showToast("请先选择知识库", "error");
+        return;
+    }
+
+    searchBtn.disabled = true;
+    searchBtn.textContent = "搜索中...";
+    searchResults.innerHTML = '<div class="search-empty">搜索中...</div>';
+
+    try {
+        const resp = await api("POST", `/api/knowledge-bases/${selectedKbId}/search`, {
+            query: query,
+            top_k: 5,
+        });
+        if (!resp.ok) {
+            const data = await resp.json();
+            throw new Error(data.detail || "搜索失败");
+        }
+        const results = await resp.json();
+        renderSearchResults(results, query);
+    } catch (e) {
+        searchResults.innerHTML = `<div class="search-empty" style="color:#e74c3c;">搜索失败: ${escapeHtml(e.message)}</div>`;
+    } finally {
+        searchBtn.disabled = false;
+        searchBtn.textContent = "搜索";
+    }
+}
+
+function renderSearchResults(results) {
+    if (!results || results.length === 0) {
+        searchResults.innerHTML = '<div class="search-empty">未找到相关结果</div>';
+        return;
+    }
+    searchResults.innerHTML = results.map((r, i) => `
+        <div class="search-result">
+            <div class="result-header">
+                <span class="result-score">#${i + 1} score:${(r.score || 0).toFixed(4)}</span>
+                <span class="result-meta">
+                    <span>📄 ${escapeHtml(r.filename || "")}</span>
+                    ${r.page_number ? `<span>📖 第${r.page_number}页</span>` : ""}
+                    ${r.section_title ? `<span>📑 ${escapeHtml(r.section_title)}</span>` : ""}
+                </span>
+            </div>
+            <pre class="result-content">${escapeHtml(r.content || "")}</pre>
+        </div>
+    `).join("");
+}
+
+// ==================== 工具函数 ====================
+function formatSize(bytes) {
+    if (!bytes || bytes === 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    let i = 0;
+    let size = bytes;
+    while (size >= 1024 && i < units.length - 1) {
+        size /= 1024;
+        i++;
+    }
+    return size.toFixed(i > 0 ? 1 : 0) + " " + units[i];
+}
+
+function escapeHtml(text) {
+    if (!text) return "";
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ==================== 认证检查 ====================
+async function checkAuth() {
+    try {
+        const resp = await fetch("/auth/me", { credentials: "include" });
+        if (!resp.ok) throw new Error();
+    } catch (_) {
+        window.location.href = "/login";
+    }
+}
+
+// ==================== 启动 ====================
+(async () => {
+    await checkAuth();
+    init();
+})();
+</script>
+</body>
+</html>

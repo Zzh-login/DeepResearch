@@ -17,3 +17,10 @@ langchain-core==1.4.8
 langchain-openai==1.3.5
 langgraph==1.2.7
 
+pydantic-settings==2.14.2
+#/ 文档处理（暂时只支持 pdf txt md docx格式的）
+pypdf
+python-docx
+aiofiles
+python-multipart
+langchain-text-splitters

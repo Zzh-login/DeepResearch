@@ -137,9 +137,14 @@ class ChatSession:
         self._context_builder = ContextBuilder(self._builder)
 
         # LangGraph 决策图（阶段2：替代旧 Pipeline/AgentRunner 的对话生成引擎）
+        from infrastructure.config.settings import get_settings
+
+        settings = get_settings()
+
         self._graph = GraphAgent(
             tools=build_graph_tools(self._tool_registry),
             context_builder=self._context_builder,
+            settings=settings,
             agent_mode=self._agent_mode,
         )
 

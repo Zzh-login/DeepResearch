@@ -61,7 +61,7 @@ class KVMemory:
 
     def __init__(self, dsn: Optional[str] = None):
         """
-        dsn: PostgreSQL 连接串，如 postgresql://user:pass@localhost:5432/robot
+        dsn: PostgreSQL 连接串，如 postgresql://user:pass@localhost:15432/robot
              不传则从环境变量 PG_DSN 读取
         """
         self._dsn = dsn
@@ -72,7 +72,7 @@ class KVMemory:
         if self._pool is None:
             dsn = self._dsn # 从环境变量读取
             import os
-            dsn = dsn or os.getenv("PG_DSN", "postgresql://postgres:postgres@localhost:5432/robot")
+            dsn = dsn or os.getenv("PG_DSN", "postgresql://postgres:postgres@localhost:15432/robot")
             if asyncpg is None:
                 raise ImportError("需要安装 asyncpg：pip install asyncpg")
             self._pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5)

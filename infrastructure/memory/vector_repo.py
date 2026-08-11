@@ -7,7 +7,7 @@
 技术栈（最终方案）：
   - PostgreSQL + pgvector: 向量存储与 ANN 检索（余弦距离 <=>）
   - asyncpg: 异步 PostgreSQL 驱动
-  - 默认 embedding: BGE-M3（1024 维，sentence-transformers 本地运行，GPU 优先）
+  - 默认 embedding: BGE-M3（1024 维，见 infrastructure.embedding.bge_m3）
   - 可替换 embedding: 传入自定义 async embed_fn（如 MiniLM / OpenAI）
 
 架构角色：
@@ -28,90 +28,14 @@ import hashlib
 import asyncio
 from typing import Optional, List, Dict, Any, Callable, Awaitable
 
+from infrastructure.embedding.bge_m3 import (
+    BGE_M3_DIM,
+    embed_query,
+    embed_documents,
+)
+
 # EmbedFn: async (text: str) -> list[float]  （也兼容返回普通 list 的同步函数）
 EmbedFn = Callable[[str], Awaitable[List[float]]]
-
-# ---- 全局模型缓存（避免每次实例化都重新加载） ----
-_global_bge_model = None
-
-# BGE-M3 输出维度
-BGE_M3_DIM = 1024
-# BGE-M3 官方检索指令前缀：仅用于"查询"侧，存储的 passage 不加。
-# 不加前缀会导致查询向量与 passage 向量空间不对齐，检索质量骤降。
-# 详见 https://huggingface.co/BAAI/bge-m3#usage
-BGE_M3_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
-# HuggingFace 镜像（国内网络加速下载）
-HF_MIRROR = "https://hf-mirror.com"
-# HuggingFace 模型缓存目录（统一存到项目内，避免散落 C 盘 / 重复下载）
-HF_HOME = "E:/robot_system/models/hf_cache"
-
-
-def _load_bge_m3():
-    """惰性加载 BGE-M3 模型，全局单例。GPU 可用时自动走 CUDA。
-
-    模型已完整缓存到本地（HF_HOME 指定目录），因此强制离线模式：
-    完全不触网，规避国内直连 huggingface.co 超时（WinError 10060）。
-    """
-    global _global_bge_model
-    if _global_bge_model is None:
-        # 必须用赋值（=）而非 setdefault：若环境已存在 HF_ENDPOINT 等变量，
-        # setdefault 不会覆盖，会回退到默认 huggingface.co 导致连接超时。
-        os.environ["HF_HOME"] = HF_HOME
-        os.environ["HF_ENDPOINT"] = HF_MIRROR
-        # 模型已本地缓存，强制离线：huggingface_hub 只走本地缓存、不发任何网络请求
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as e:
-            raise RuntimeError(
-                "sentence-transformers 未安装，请先执行：\n"
-                "  pip install sentence-transformers torch\n"
-                f"原始错误：{e}"
-            )
-        try:
-            _global_bge_model = SentenceTransformer("BAAI/bge-m3", local_files_only=True)
-        except Exception as e:
-            raise RuntimeError(
-                "加载 BGE-M3 模型失败。模型应已缓存到：\n"
-                f"  {HF_HOME}\n"
-                "若缓存缺失，请联网执行以下代码下载（已配镜像 hf-mirror.com）：\n"
-                "  >>> import os\n"
-                "  >>> os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'\n"
-                "  >>> from sentence_transformers import SentenceTransformer\n"
-                "  >>> SentenceTransformer('BAAI/bge-m3')\n"
-                f"原始错误：{e}"
-            )
-    return _global_bge_model
-
-
-async def bge_m3_embed(text: str, is_query: bool = False) -> List[float]:
-    """
-    默认 embedding：BGE-M3（1024 维，归一化后余弦相似度）
-
-    BGE-M3 的检索质量强依赖指令前缀：
-      - 存储（passage）：直接 encode，不加前缀
-      - 查询（query）：必须加 BGE_M3_QUERY_PREFIX，否则相似度严重漂移
-    详见 https://huggingface.co/BAAI/bge-m3
-
-    sentence-transformers 的 load + encode 都是同步阻塞的，
-    整段用 asyncio.to_thread 卸载到线程池，避免阻塞事件循环。
-    """
-    text_for_encode = f"{BGE_M3_QUERY_PREFIX}{text}" if is_query else text
-
-    def _do_encode():
-        """同步编码：加载（或取全局单例）BGE-M3 模型并对文本做归一化编码。
-
-        设计为在线程池（asyncio.to_thread）中调用，避免阻塞事件循环。
-        """
-        model = _load_bge_m3()
-        return model.encode(text_for_encode, normalize_embeddings=True)
-
-    emb = await asyncio.to_thread(_do_encode)
-    if hasattr(emb, "tolist"):
-        return emb.tolist()
-    return list(emb)
-
 
 # ============================================================
 # VectorMemory
@@ -125,7 +49,7 @@ class VectorMemory:
         vm = VectorMemory()
 
         # 自定义连接串
-        vm = VectorMemory(dsn="postgresql://user:pass@host:5432/robot")
+        vm = VectorMemory(dsn="postgresql://user:pass@host:15432/robot")
 
         # 自定义 embedding（如 MiniLM / OpenAI）
         async def my_embed(text): ...
@@ -142,14 +66,14 @@ class VectorMemory:
 
         Args:
             dsn: PostgreSQL 连接串；缺省时读环境变量 PG_DSN，再缺省用
-                 localhost:5432/robot 默认串。
+                 localhost:15432/robot 默认串。
             embedding_dim: 向量维度（默认 1024，与 BGE-M3 一致）。
             embed_fn: 可插拔的异步 embedding 函数；为 None 时走默认 BGE-M3。
         连接池与建表均惰性创建（首次 _get_pool 时），构造本身不连库。
         """
         self._dsn = dsn or os.getenv(
             "PG_DSN",
-            "postgresql://postgres:postgres@localhost:5432/robot",
+            "postgresql://postgres:postgres@localhost:15432/robot",
         )
         self._embedding_dim = embedding_dim
         self._embed_fn: Optional[EmbedFn] = embed_fn
@@ -345,7 +269,12 @@ class VectorMemory:
         if self._embed_fn is not None:
             out = self._embed_fn(text)
         else:
-            out = await bge_m3_embed(text, is_query=is_query)
+            # 默认走 BGE-M3（embedding 逻辑已抽离到 infrastructure.embedding.bge_m3）
+            if is_query:
+                out = await embed_query(text)
+            else:
+                results = await embed_documents([text])
+                out = results[0]
         # 兼容同步函数（返回 list）与异步函数（返回 coroutine）
         if asyncio.iscoroutine(out):
             out = await out
