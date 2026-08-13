@@ -31,6 +31,11 @@ class KnowledgeRepository(ABC):
         ...
 
     @abstractmethod
+    async def get_knowledge_base(self, kb_id: UUID) -> Optional[dict]:
+        """查询当前 owner 的单个知识库；不存在或不属于该用户时返回 None。"""
+        ...
+        
+    @abstractmethod
     async def delete_knowledge_base(self, kb_id: UUID) -> bool:
         """删除知识库（级联删文档和切片）。返回是否成功。"""
         ...

@@ -445,22 +445,19 @@ async def websocket_endpoint(ws: WebSocket):
                         and event.get("text")
                         and not event.get("error")
                     ):
-                        audio = ""
                         try:
-                            audio = (
-                                await session.synthesize_tts(event["text"])
-                                or ""
-                            )
+                            audio = await session.synthesize_tts(event["text"])
+                            if audio:
+                                await ws.send_json(
+                                    {
+                                        "type": "tts.done",
+                                        "text": "",
+                                        "audio": audio,
+                                    }
+                                )
                         except Exception as exc:
+                            # 文字答案已经成功，TTS 失败只能记日志，不能再报聊天失败。
                             print(f"[WS] tts error for user={user_id}: {exc}")
-                        finally:
-                            await ws.send_json(
-                                {
-                                    "type": "tts.done",
-                                    "text": "",
-                                    "audio": audio,
-                                }
-                            )
             except ChatProtocolError as exc:
                 await ws.send_json(
                     {

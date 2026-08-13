@@ -1158,11 +1158,7 @@ function connectWS() {
             }
             streamBuffer = "";
             streamEl = null;
-            if (ttsMode === "local" || data.error) {
-                finishResponse();
-            } else {
-                statusText.textContent = "正在生成语音...";
-            }
+            finishResponse();
             return;
         }
 
@@ -1176,13 +1172,8 @@ function connectWS() {
             return;
         }
 
-        if (data.type === "tts.done") {
-            if (data.audio && !voiceInputActive) {
-                playAudio(data.audio, lastAssistantEl);
-            }
-            statusText.textContent = "";
-            statusText.className = "status-text";
-            finishResponse();
+        if (data.type === "tts.done" && data.audio && !voiceInputActive) {
+            playAudio(data.audio, lastAssistantEl);
         }
     };
 

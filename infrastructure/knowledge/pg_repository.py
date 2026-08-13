@@ -61,7 +61,19 @@ class PgKnowledgeRepository(KnowledgeRepository):
                 self._owner_id,
             )
         return [dict(row) for row in rows]
-
+    
+    async def get_knowledge_base(self, kb_id: UUID) -> Optional[dict]:
+        """只查询当前用户拥有的单个知识库。"""
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id, owner_id, name, description, created_at, updated_at "
+                "FROM knowledge_bases "
+                "WHERE id = $1 AND owner_id = $2",
+                kb_id,
+                self._owner_id,
+            )
+        return dict(row) if row else None
+    
     async def delete_knowledge_base(self, kb_id: UUID) -> bool:
         """删除知识库（级联删文档和切片由 DB FOREIGN KEY ON DELETE CASCADE 处理）。
 
@@ -307,15 +319,13 @@ class PgKnowledgeRepository(KnowledgeRepository):
         embedding: list[float],
         top_k: int = 5,
     ) -> list[dict]:
-        """向量语义检索。
-
-        使用 pgvector 的 <=> 运算符计算余弦距离，
-        1 - distance 作为相似度分数（越接近 1 越相似）。
-        """
+        """在当前用户的指定知识库中执行向量语义检索。"""
         async with self._db.pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT\n"
+                "    c.id AS chunk_id,\n"
                 "    c.document_id,\n"
+                "    c.chunk_index,\n"
                 "    d.filename,\n"
                 "    c.content,\n"
                 "    c.page_number,\n"
@@ -328,7 +338,10 @@ class PgKnowledgeRepository(KnowledgeRepository):
                 "  AND d.status = 'ready'\n"
                 "ORDER BY c.embedding <=> $1\n"
                 "LIMIT $4",
-                embedding, kb_id, self._owner_id, top_k,
+                embedding,
+                kb_id,
+                self._owner_id,
+                top_k,
             )
         return [dict(row) for row in rows]
 

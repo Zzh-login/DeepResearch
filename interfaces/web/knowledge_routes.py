@@ -3,6 +3,12 @@
 所有路由由 JWT 保护（get_current_user 依赖注入），
 知识库操作强制归属校验（仅允许操作用户自己的知识库）。
 """
+from app.rag.graph import RagModelError, RagRetrievalError
+from interfaces.web.rag_schemas import (
+    CitationResponse,
+    RagAskRequest,
+    RagAskResponse,
+)
 
 import hashlib
 import logging
@@ -14,6 +20,7 @@ import aiofiles
 
 from fastapi import APIRouter, Request, Depends, UploadFile, File, BackgroundTasks, HTTPException, status
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 
 from infrastructure.auth.dependency import get_current_user
 from infrastructure.config.settings import get_settings
@@ -31,6 +38,40 @@ ALLOWED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf", ".docx"}
 # ── 模块级单例（无状态，线程安全共享） ──
 _splitter = KnowledgeTextSplitter()
 logger = logging.getLogger(__name__)
+
+
+DATABASE_UNAVAILABLE_EXCEPTIONS = (
+    ConnectionError,
+    TimeoutError,
+    asyncpg.PostgresConnectionError,
+    asyncpg.CannotConnectNowError,
+    asyncpg.TooManyConnectionsError,
+)
+
+
+class KnowledgeDatabaseRoute(APIRoute):
+    """Map runtime PostgreSQL connectivity failures to a stable HTTP 503."""
+
+    def get_route_handler(self):
+        original_handler = super().get_route_handler()
+
+        async def database_error_handler(request: Request):
+            try:
+                return await original_handler(request)
+            except DATABASE_UNAVAILABLE_EXCEPTIONS as exc:
+                request.app.state.database_status = "degraded"
+                request.app.state.database_error = str(exc)
+                logger.exception(
+                    "PostgreSQL unavailable during %s %s",
+                    request.method,
+                    request.url.path,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="知识库服务暂不可用，请稍后重试",
+                ) from None
+
+        return database_error_handler
 
 
 async def _require_database(request: Request) -> None:
@@ -57,6 +98,7 @@ def _parse_uuid(value: str, label: str) -> UUID:
 router = APIRouter(
     prefix="/api",
     dependencies=[Depends(_require_database)],
+    route_class=KnowledgeDatabaseRoute,
 )
 
 
@@ -543,3 +585,76 @@ async def search_knowledge_base(
         }
         for r in results
     ]
+@router.post(
+    "/knowledge-bases/{kb_id}/ask",
+    response_model=RagAskResponse,
+)
+async def ask_knowledge_base(
+    kb_id: str,
+    payload: RagAskRequest,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> RagAskResponse:
+    repo = _get_repo(request, user_id)
+    kb_uuid = _parse_uuid(kb_id, "知识库")
+    await _verify_kb_ownership(repo, kb_uuid)
+
+    rag_graph = getattr(request.app.state, "rag_graph", None)
+    if rag_graph is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RAG 服务暂不可用，请检查 DeepSeek 配置",
+        )
+
+    try:
+        result = await rag_graph.answer(
+            repo=repo,
+            knowledge_base_id=kb_uuid,
+            query=payload.query,
+            top_k=(
+                payload.top_k
+                if payload.top_k is not None
+                else get_settings().rag_top_k
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from None
+    except RagRetrievalError:
+        logger.exception("RAG retrieval failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="知识库检索服务暂不可用",
+        ) from None
+    except RagModelError:
+        logger.exception("RAG model generation failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="大模型回答生成失败",
+        ) from None
+
+    citations = [
+        CitationResponse(
+            source_id=item.source_id,
+            chunk_id=item.chunk_id,
+            document_id=item.document_id,
+            chunk_index=item.chunk_index,
+            filename=item.filename,
+            excerpt=item.excerpt,
+            score=item.score,
+            page_number=item.page_number,
+            section_title=item.section_title,
+        )
+        for item in result.citations
+    ]
+
+    return RagAskResponse(
+        query=result.query,
+        answer=result.answer,
+        status=result.status,
+        citations=citations,
+        retrieved_count=result.retrieved_count,
+        citation_valid=result.citation_valid,
+    )

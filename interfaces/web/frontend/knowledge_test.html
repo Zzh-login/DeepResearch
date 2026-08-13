@@ -347,11 +347,20 @@
         <div class="row" style="margin-bottom:14px;">
             <input type="text" id="searchQuery" placeholder="输入检索问题..." style="flex:1;">
             <button class="btn btn-primary" id="searchBtn" onclick="doSearch()">搜索</button>
+            <button class="btn btn-primary" id="askBtn" onclick="askKnowledgeBase()">AI 回答</button>
         </div>
 
         <!-- 搜索结果 -->
         <div id="searchResults">
             <div class="search-empty">输入问题后点击搜索，查看检索结果</div>
+        </div>
+
+        <!-- AI 回答 -->
+        <div id="ragAnswer" class="search-result" style="display:none;margin-top:16px;">
+            <div class="card-title">知识库回答</div>
+            <div id="ragAnswerStatus" class="result-meta"></div>
+            <div id="ragAnswerText" class="result-content" style="margin-top:8px;"></div>
+            <div id="ragCitations" style="margin-top:12px;"></div>
         </div>
     </div>
 </div>
@@ -388,8 +397,13 @@ const docListContainer = document.getElementById("docListContainer");
 const docRefreshInfo = document.getElementById("docRefreshInfo");
 const searchQuery = document.getElementById("searchQuery");
 const searchBtn = document.getElementById("searchBtn");
+const askBtn = document.getElementById("askBtn");
 const searchResults = document.getElementById("searchResults");
 const presetQuestions = document.getElementById("presetQuestions");
+const ragAnswer = document.getElementById("ragAnswer");
+const ragAnswerStatus = document.getElementById("ragAnswerStatus");
+const ragAnswerText = document.getElementById("ragAnswerText");
+const ragCitations = document.getElementById("ragCitations");
 
 // ==================== 初始化 ====================
 function init() {
@@ -714,6 +728,81 @@ async function doSearch() {
     } finally {
         searchBtn.disabled = false;
         searchBtn.textContent = "搜索";
+    }
+}
+
+async function askKnowledgeBase() {
+    const query = searchQuery.value.trim();
+    if (!selectedKbId) {
+        showToast("请先选择知识库", "error");
+        return;
+    }
+    if (!query) {
+        showToast("请输入问题", "error");
+        return;
+    }
+
+    askBtn.disabled = true;
+    askBtn.textContent = "生成中...";
+    ragAnswer.style.display = "block";
+    ragAnswerStatus.textContent = "正在检索证据";
+    ragAnswerText.textContent = "正在生成回答...";
+    ragCitations.innerHTML = "";
+
+    try {
+        const resp = await api(
+            "POST",
+            `/api/knowledge-bases/${selectedKbId}/ask`,
+            { query: query, top_k: 5 }
+        );
+        const data = await resp.json();
+        if (!resp.ok) {
+            const detail = typeof data.detail === "string"
+                ? data.detail
+                : "回答生成失败";
+            throw new Error(detail);
+        }
+
+        const statusText = {
+            grounded: "已根据知识库证据生成",
+            insufficient_context: "知识库证据不足",
+            citation_rejected: "答案未通过引用校验",
+        }[data.status] || data.status;
+
+        ragAnswerStatus.textContent = statusText;
+        ragAnswerText.textContent = data.answer;
+
+        if (!data.citations || data.citations.length === 0) {
+            ragCitations.innerHTML = '<div class="result-meta">没有可展示的引用</div>';
+            return;
+        }
+
+        ragCitations.innerHTML = data.citations.map(citation => {
+            const page = citation.page_number !== null
+                ? ` · 第${citation.page_number}页`
+                : "";
+            const section = citation.section_title
+                ? ` · ${escapeHtml(citation.section_title)}`
+                : "";
+            return `
+                <div class="search-result">
+                    <div class="result-header">
+                        <strong>[${escapeHtml(citation.source_id)}]</strong>
+                        <span class="result-meta">
+                            ${escapeHtml(citation.filename)}${page}${section}
+                        </span>
+                    </div>
+                    <div class="result-content">${escapeHtml(citation.excerpt)}</div>
+                </div>
+            `;
+        }).join("");
+    } catch (error) {
+        ragAnswerStatus.textContent = "请求失败";
+        ragAnswerText.textContent = error.message;
+        ragCitations.innerHTML = "";
+    } finally {
+        askBtn.disabled = false;
+        askBtn.textContent = "AI 回答";
     }
 }
 
