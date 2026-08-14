@@ -568,6 +568,23 @@
             color: #1f8f5f;
         }
 
+        .mode-hybrid {
+            color: #b16a24;
+        }
+
+        .mode-normal {
+            color: #606575;
+        }
+
+        .route-note {
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(0, 0, 0, 0.1);
+            color: #707080;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
         .citation-list {
             display: grid;
             gap: 8px;
@@ -649,9 +666,10 @@
         <div class="chat-mode-bar" aria-label="回答方式">
             <label for="chatModeSelect">回答方式</label>
             <select id="chatModeSelect">
+                <option value="auto">自动</option>
                 <option value="normal">普通聊天</option>
                 <option value="knowledge">仅知识库</option>
-                <option value="hybrid" disabled>混合问答（后续开放）</option>
+                <option value="hybrid">混合问答</option>
                 <option value="deep_research" disabled>深度研究（后续开放）</option>
             </select>
 
@@ -739,7 +757,7 @@ const knowledgePickerWrap = document.getElementById("knowledgePickerWrap");
 const knowledgeBaseSelect = document.getElementById("knowledgeBaseSelect");
 const refreshKnowledgeBtn = document.getElementById("refreshKnowledgeBtn");
 
-const selectableChatModes = new Set(["normal", "knowledge"]);
+const selectableChatModes = new Set(["auto","normal","knowledge","hybrid"]);
 const storedChatMode = localStorage.getItem("chatMode") || "normal";
 let activeChatMode = selectableChatModes.has(storedChatMode)
     ? storedChatMode
@@ -994,6 +1012,10 @@ async function loadKnowledgeBases() {
             activeKnowledgeBaseId = "";
             localStorage.removeItem("knowledgeBaseId");
         }
+        if (!activeKnowledgeBaseId && knowledgeBases.length === 1) {
+            activeKnowledgeBaseId = knowledgeBases[0].id;
+            localStorage.setItem("knowledgeBaseId", activeKnowledgeBaseId);
+        }
         knowledgeBaseSelect.value = activeKnowledgeBaseId;
     } catch (error) {
         statusText.textContent = "知识库列表暂时无法加载";
@@ -1005,10 +1027,17 @@ function applyChatMode(mode) {
     activeChatMode = mode;
     localStorage.setItem("chatMode", mode);
     chatModeSelect.value = mode;
-    knowledgePickerWrap.hidden = mode !== "knowledge";
-    textInput.placeholder = mode === "knowledge"
-        ? "向选中的知识库提问..."
-        : "输入文字，按 Enter 发送...";
+
+    const needsKnowledgeBase = ["auto", "knowledge", "hybrid"].includes(mode);
+    knowledgePickerWrap.hidden = !needsKnowledgeBase;
+
+    const placeholders = {
+        auto: "自动选择回答方式...",
+        normal: "输入文字，按 Enter 发送...",
+        knowledge: "仅依据选中的知识库提问...",
+        hybrid: "结合知识库与通用知识提问..."
+    };
+    textInput.placeholder = placeholders[mode] || placeholders.normal;
 }
 
 chatModeSelect.addEventListener("change", async event => {
@@ -1018,7 +1047,9 @@ chatModeSelect.addEventListener("change", async event => {
         return;
     }
     applyChatMode(event.target.value);
-    if (activeChatMode === "knowledge") await loadKnowledgeBases();
+    if (["auto", "knowledge", "hybrid"].includes(activeChatMode)) {
+        await loadKnowledgeBases();
+    }
 });
 
 knowledgeBaseSelect.addEventListener("change", event => {
@@ -1040,7 +1071,7 @@ function sendText(text) {
         appendMessage("(消息未发送：连接断开)", "assistant", activeChatMode);
         return;
     }
-    if (activeChatMode === "knowledge" && !activeKnowledgeBaseId) {
+    if (["auto", "knowledge", "hybrid"].includes(activeChatMode)&& !activeKnowledgeBaseId) {
         statusText.textContent = "请先选择一个知识库";
         knowledgeBaseSelect.focus();
         return;
@@ -1062,9 +1093,9 @@ function sendText(text) {
         action: "chat",
         text,
         mode: activeChatMode,
-        knowledge_base_id: activeChatMode === "knowledge"
-            ? activeKnowledgeBaseId
-            : null,
+        knowledge_base_id: ["auto", "knowledge", "hybrid"].includes(
+            activeChatMode
+        ) ? activeKnowledgeBaseId : null,
         tts_mode: ttsMode,
         agent_mode: true
     }));
@@ -1144,13 +1175,28 @@ function connectWS() {
             if (data.mode === "normal" && streamEl) {
                 finalizeStreamBubble(data.text);
                 answerEl = streamEl;
-                appendModeBadge(answerEl, "normal");
             } else {
                 answerEl = appendMessage(data.text, "assistant", data.mode);
             }
 
-            if (data.mode === "knowledge") {
+            appendModeBadge(
+                answerEl,
+                data.mode,
+                data.requested_mode || data.mode
+            );
+
+            if (["knowledge", "hybrid"].includes(data.mode)) {
                 appendCitationCards(answerEl, data.citations || []);
+            }
+
+            if (data.requested_mode === "auto" && data.route_reason) {
+                const routeNote = document.createElement("div");
+                routeNote.className = "route-note";
+                const confidence = Number(data.route_confidence || 0);
+                routeNote.textContent =
+                    `自动选择原因：${data.route_reason}` +
+                    (confidence ? `（置信度 ${confidence.toFixed(2)}）` : "");
+                answerEl.appendChild(routeNote);
             }
 
             if (ttsMode === "local" && !voiceInputActive) {
@@ -1268,11 +1314,25 @@ function appendCitationCards(messageEl, citations) {
     messageEl.appendChild(section);
 }
 
-function appendModeBadge(messageEl, mode) {
+function modeLabel(mode) {
+    return {
+        auto: "自动",
+        normal: "普通聊天",
+        knowledge: "仅知识库",
+        hybrid: "混合问答"
+    }[mode] || mode || "未知模式";
+}
+
+function appendModeBadge(messageEl, mode, requestedMode = mode) {
     if (!messageEl || !mode) return;
+    const oldBadge = messageEl.querySelector(".mode-badge");
+    if (oldBadge) oldBadge.remove();
+
     const badge = document.createElement("span");
     badge.className = `mode-badge mode-${mode}`;
-    badge.textContent = mode === "knowledge" ? "仅知识库" : "普通聊天";
+    badge.textContent = requestedMode === "auto"
+        ? `自动 -> ${modeLabel(mode)}`
+        : modeLabel(mode);
     messageEl.prepend(badge);
 }
 
@@ -1544,8 +1604,10 @@ async function checkAuth() {
         currentUsername = data.username;
         document.getElementById("userNameDisplay").innerHTML =
             '\u{1F464} <strong>' + escapeHtml(currentUsername) + '</strong>';
+        return true;
     } catch (_) {
-        window.location.href = "/login";
+        window.location.replace("/login");
+        return false;
     }
 }
 
@@ -1556,7 +1618,8 @@ document.getElementById("logoutBtn").addEventListener("click", async () => {
 
 // ==================== 初始化 ====================
 async function init() {
-    await checkAuth();
+    const authenticated = await checkAuth();
+    if (!authenticated) return;
 
     // 普通历史由 /ws 的 chat.history 事件回放。
     // 不再调用 loadHistory()，否则每条普通历史会显示两遍。
@@ -1565,7 +1628,7 @@ async function init() {
     await loadApiConfig();
 
     applyChatMode(activeChatMode);
-    if (activeChatMode === "knowledge") {
+    if (["auto", "knowledge", "hybrid"].includes(activeChatMode)) {
         await loadKnowledgeBases();
     }
 

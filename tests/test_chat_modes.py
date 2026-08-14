@@ -11,11 +11,11 @@ class ChatModeSchemaTests(unittest.TestCase):
     def test_enabled_modes_are_explicit(self):
         self.assertTrue(is_chat_mode_enabled(ChatMode.NORMAL))
         self.assertTrue(is_chat_mode_enabled(ChatMode.KNOWLEDGE))
-        self.assertFalse(is_chat_mode_enabled(ChatMode.HYBRID))
+        self.assertTrue(is_chat_mode_enabled(ChatMode.HYBRID))
+        self.assertTrue(is_chat_mode_enabled(ChatMode.AUTO))
         self.assertFalse(is_chat_mode_enabled(ChatMode.DEEP_RESEARCH))
-        self.assertFalse(is_chat_mode_enabled(ChatMode.AUTO))
 
-    def test_normal_mode_discards_stale_knowledge_base_id(self):
+    def test_normal_discards_stale_knowledge_base_id(self):
         request = ChatRequest.model_validate(
             {
                 "text": "你好",
@@ -25,10 +25,22 @@ class ChatModeSchemaTests(unittest.TestCase):
         )
         self.assertIsNone(request.knowledge_base_id)
 
-    def test_knowledge_mode_requires_knowledge_base_id(self):
+    def test_knowledge_requires_knowledge_base_id(self):
         with self.assertRaises(ValidationError):
             ChatRequest.model_validate(
                 {"text": "问题", "mode": "knowledge"}
+            )
+
+    def test_hybrid_requires_knowledge_base_id(self):
+        with self.assertRaises(ValidationError):
+            ChatRequest.model_validate(
+                {"text": "问题", "mode": "hybrid"}
+            )
+
+    def test_auto_requires_knowledge_base_id(self):
+        with self.assertRaises(ValidationError):
+            ChatRequest.model_validate(
+                {"text": "问题", "mode": "auto"}
             )
 
     def test_empty_text_is_rejected_after_strip(self):

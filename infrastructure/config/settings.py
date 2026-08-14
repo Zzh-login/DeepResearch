@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     rag_max_source_chars: int = Field(default=2400, ge=200, le=20000)
     rag_model_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
 
+    auto_router_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
+    auto_router_min_confidence: float = Field(default=0.65, ge=0.0, le=1.0)
+    
+    hybrid_max_context_chars: int = Field(default=10000, ge=1000, le=100000)
+    hybrid_max_source_chars: int = Field(default=2000, ge=200, le=20000)
+    hybrid_model_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

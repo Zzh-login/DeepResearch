@@ -2,8 +2,6 @@
 
 from pydantic import ValidationError
 
-from app.chat.orchestrator import ChatProtocolError, ManualChatOrchestrator
-from interfaces.web.chat_schemas import ChatRequest, TtsRequest
 
 import json
 import asyncio
@@ -26,6 +24,12 @@ from infrastructure.embedding.bge_m3 import warmup as warmup_bge_m3
 
 from contextlib import asynccontextmanager
 from app.rag.graph import RagGraph
+
+from app.chat.orchestrator import ChatProtocolError, ManualChatOrchestrator
+from interfaces.web.chat_schemas import ChatRequest, TtsRequest
+
+from app.chat.auto_router import AutoChatRouter
+from app.rag.hybrid_graph import HybridGraph
 
 async def _warmup_embedding() -> None:
     """Warm the local embedding model without making app startup depend on it."""
@@ -57,14 +61,28 @@ async def lifespan(app: FastAPI):
     app.state.rag_status = "unavailable"
     app.state.rag_error = None
 
+    app.state.hybrid_graph = None
+    app.state.auto_router = None
+
     if not settings.deepseek_api_key:
         app.state.rag_error = "DEEPSEEK_API_KEY 未配置"
         print("[RAG] unavailable: DEEPSEEK_API_KEY is missing")
     else:
         try:
-            app.state.rag_graph = RagGraph(settings)
+            rag_graph = RagGraph(settings)
+            hybrid_graph = HybridGraph(settings)
+            auto_router = AutoChatRouter(settings)
+
+            # 三个对象全部成功后才发布，避免半初始化状态。
+            app.state.rag_graph = rag_graph
+            app.state.hybrid_graph = hybrid_graph
+            app.state.auto_router = auto_router
             app.state.rag_status = "ok"
         except Exception as exc:
+            app.state.rag_graph = None
+            app.state.hybrid_graph = None
+            app.state.auto_router = None
+            app.state.rag_status = "unavailable"
             app.state.rag_error = str(exc)
             print(f"[RAG] initialization failed: {exc}")
             
@@ -86,6 +104,8 @@ async def lifespan(app: FastAPI):
     app.state.chat_orchestrator = ManualChatOrchestrator(
         database=database,
         rag_graph=app.state.rag_graph,
+        hybrid_graph=app.state.hybrid_graph,
+        auto_router=app.state.auto_router,
         settings=settings,
     )
 

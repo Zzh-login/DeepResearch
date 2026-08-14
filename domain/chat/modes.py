@@ -9,7 +9,14 @@ class ChatMode(str, Enum):
     AUTO = "auto"
 
 
-ENABLED_CHAT_MODES = frozenset({ChatMode.NORMAL, ChatMode.KNOWLEDGE})
+ENABLED_CHAT_MODES = frozenset(
+    {
+        ChatMode.NORMAL,
+        ChatMode.KNOWLEDGE,
+        ChatMode.HYBRID,
+        ChatMode.AUTO,
+    }
+)
 
 
 def is_chat_mode_enabled(mode: ChatMode) -> bool:

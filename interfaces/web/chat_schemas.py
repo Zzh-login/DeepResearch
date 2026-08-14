@@ -6,6 +6,13 @@ from pydantic import BaseModel, Field, model_validator
 from domain.chat.modes import ChatMode
 
 
+KB_REQUIRED_MODES = {
+    ChatMode.KNOWLEDGE,
+    ChatMode.HYBRID,
+    ChatMode.AUTO,
+}
+
+
 class ChatRequest(BaseModel):
     action: Literal["chat"] = "chat"
     text: str = Field(min_length=1, max_length=10000)
@@ -19,8 +26,8 @@ class ChatRequest(BaseModel):
         self.text = self.text.strip()
         if not self.text:
             raise ValueError("消息不能为空")
-        if self.mode == ChatMode.KNOWLEDGE and self.knowledge_base_id is None:
-            raise ValueError("仅知识库模式必须选择知识库")
+        if self.mode in KB_REQUIRED_MODES and self.knowledge_base_id is None:
+            raise ValueError("当前回答方式必须选择知识库")
         if self.mode == ChatMode.NORMAL:
             self.knowledge_base_id = None
         return self
