@@ -18,9 +18,11 @@ KV 记忆存储 —— 用户偏好 / 长期记忆的键值对存储
   Chat Memory 存"刚才聊了什么"（最近 N 轮上下文）
 """
 
-import json
 from typing import Optional, Dict, Any
 from datetime import datetime
+
+from infrastructure.config.settings import get_settings
+from infrastructure.database.codecs import register_json_codecs
 
 try:
     import asyncpg
@@ -62,20 +64,27 @@ class KVMemory:
     def __init__(self, dsn: Optional[str] = None):
         """
         dsn: PostgreSQL 连接串，如 postgresql://user:pass@localhost:15432/robot
-             不传则从环境变量 PG_DSN 读取
+             不传则从项目 Settings.pg_dsn 读取（由 .env 的 PG_DSN 覆盖）
         """
         self._dsn = dsn
         self._pool = None
 
+    async def _init_conn(self, conn):
+        """连接池 init 回调：让 JSONB 读写保持 Python 对象语义。"""
+        await register_json_codecs(conn)
+
     async def _get_pool(self):
         """惰性创建连接池"""
         if self._pool is None:
-            dsn = self._dsn # 从环境变量读取
-            import os
-            dsn = dsn or os.getenv("PG_DSN", "postgresql://postgres:postgres@localhost:15432/robot")
+            dsn = self._dsn or get_settings().pg_dsn
             if asyncpg is None:
                 raise ImportError("需要安装 asyncpg：pip install asyncpg")
-            self._pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5)
+            self._pool = await asyncpg.create_pool(
+                dsn,
+                min_size=1,
+                max_size=5,
+                init=self._init_conn,
+            )
         return self._pool
 
     async def ensure_table(self) -> None:
@@ -97,7 +106,7 @@ class KVMemory:
                 user_id, key_name,
             )
         if row:
-            return json.loads(row["value"])
+            return row["value"]
         return None
 
     async def set(
@@ -117,7 +126,7 @@ class KVMemory:
                 ON CONFLICT (user_id, key_name)
                 DO UPDATE SET value = $3::jsonb, updated_at = NOW()
                 """,
-                user_id, key_name, json.dumps(value, ensure_ascii=False),
+                user_id, key_name, value,
             )
 
     async def delete(self, user_id: str, key_name: str) -> None:

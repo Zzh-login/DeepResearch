@@ -371,6 +371,28 @@ async def _search_baidu(api_key: str, query: str, top_k: int) -> List[Dict[str, 
         })
     return out
 
+async def search_structured(
+    query: str,
+    top_k: int = 5,
+    tavily_key: str = "",
+    baidu_key: str = "",
+) -> List[Dict[str, Any]]:
+    """Return cleaned structured results for research workflows."""
+    tavily_key = tavily_key or os.getenv("WEB_SEARCH_API_KEY", "")
+    baidu_key = baidu_key or os.getenv("BAIDU_API_KEY", "")
+
+    cleaned: List[Dict[str, Any]] = []
+    if tavily_key:
+        cleaned = CredibilityFilter.clean(
+            await _search_tavily(tavily_key, query, top_k),
+            query=query,
+        )
+    if not cleaned and baidu_key:
+        cleaned = CredibilityFilter.clean(
+            await _search_baidu(baidu_key, query, top_k),
+            query=query,
+        )
+    return cleaned[:top_k]
 
 # ────────────────────── 搜索工具（继承项目 Tool） ──────────────────────
 class WebSearchTool(Tool):

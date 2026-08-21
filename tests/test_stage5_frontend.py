@@ -20,7 +20,7 @@ class Stage5FrontendTests(unittest.TestCase):
         init_block = self.html.split("async function init()", 1)[1]
         init_block = init_block.split("\n}\n\ninit();", 1)[0]
         self.assertIn(
-            '["auto", "knowledge", "hybrid"].includes(activeChatMode)',
+            '["auto", "knowledge", "hybrid", "deep_research"].includes(activeChatMode)',
             init_block,
         )
         self.assertIn("await loadKnowledgeBases();", init_block)

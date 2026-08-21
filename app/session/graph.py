@@ -66,6 +66,7 @@ class GraphAgent:
             temperature=temperature,
             max_tokens=max_tokens,
             streaming=True,
+            extra_body={"thinking": {"type": "disabled"}},
         )
         # 工具：仅 agent_mode 开启时绑定到模型
         self._tool_map = {t.name: t for t in tools}

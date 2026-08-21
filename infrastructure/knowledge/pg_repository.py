@@ -4,7 +4,6 @@
 owner_id 在构造时传入，所有数据库查询的 WHERE 条件必须带 owner_id。
 """
 
-import json
 from uuid import UUID, uuid4
 from typing import Optional
 
@@ -301,7 +300,7 @@ class PgKnowledgeRepository(KnowledgeRepository):
                 embedding,
                 chunk.page_number,
                 chunk.section_title,
-                json.dumps(chunk.metadata or {}, ensure_ascii=False),
+                chunk.metadata or {},
             ))
 
         async with self._db.pool.acquire() as conn:
@@ -381,7 +380,7 @@ class PgKnowledgeRepository(KnowledgeRepository):
                 embedding,
                 chunk.page_number,
                 chunk.section_title,
-                json.dumps(chunk.metadata or {}, ensure_ascii=False),
+                chunk.metadata or {},
             ))
 
         async with self._db.pool.acquire() as conn:

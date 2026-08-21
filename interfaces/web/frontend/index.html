@@ -20,7 +20,7 @@
 
         .container {
             width: 100%;
-            max-width: 520px;
+            max-width: 960px;
             display: flex;
             flex-direction: column;
             gap: 12px;
@@ -208,6 +208,7 @@
             border-radius: 16px;
             padding: 16px;
             box-shadow: 0 1px 3px rgba(30, 30, 60, 0.06);
+            min-width: 0;
         }
 
         .chat-area {
@@ -617,6 +618,115 @@
             line-height: 1.55;
             white-space: pre-wrap;
         }
+        .research-panel {
+            margin-top: 8px;
+            padding: 12px;
+            border: 1px solid #dfe2e8;
+            border-radius: 6px;
+            background: #ffffff;
+            min-width: 0;
+        }
+        .research-panel[hidden] { display: none; }
+        .research-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        #researchQuery {
+            margin-top: 4px;
+            color: #606575;
+            overflow-wrap: anywhere;
+        }
+        .research-progress {
+            display: grid;
+            grid-template-columns: minmax(120px, 1fr) auto;
+            align-items: center;
+            gap: 10px;
+            margin: 12px 0;
+        }
+        #researchProgress { width: 100%; }
+        #researchReport { line-height: 1.7; overflow-wrap: anywhere; }
+        .research-error {
+            border-left: 3px solid #c53b36;
+            border-radius: 4px;
+            background: #fff4f3;
+            padding: 12px;
+            color: #70211e;
+        }
+        .research-error strong { display: block; margin-bottom: 6px; }
+        .research-error p { margin: 0; white-space: pre-wrap; }
+        #researchSources { display: grid; gap: 8px; margin-top: 12px; }
+        #researchHistoryWrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #researchHistoryWrap[hidden] { display: none; }
+        @media (max-width: 640px) {
+            .research-progress { grid-template-columns: 1fr; }
+        }
+        .workspace {
+            display: grid;
+            grid-template-columns: 280px minmax(0, 1fr);
+            gap: 0;
+        }
+        .workspace.hidden { display: none; }
+        .conversation-sidebar {
+            width: min(280px, 28vw);
+            min-width: 220px;
+            border-right: 1px solid #dfe2e8;
+            overflow-y: auto;
+        }
+        .conversation-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border-bottom: 1px solid #dfe2e8;
+        }
+        .conversation-item {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            min-height: 40px;
+            padding: 8px 12px;
+            border: 0;
+            border-bottom: 1px solid #eef0f3;
+            background: #fff;
+            text-align: left;
+        }
+        .conversation-item.active { background: #eef6f2; }
+        .conversation-title {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .research-plan {
+            border-top: 1px solid #dfe2e8;
+            padding-top: 12px;
+            overflow-wrap: anywhere;
+        }
+        .research-plan ol {
+            margin: 0;
+            padding-left: 0;
+            list-style-position: inside;
+        }
+        .research-subtask-running { color: #8a5b00; }
+        .research-subtask-completed { color: #18794e; }
+        .research-subtask-failed { color: #b42318; }
+        @media (max-width: 760px) {
+            .workspace { grid-template-columns: 1fr; }
+            .conversation-sidebar {
+                width: 100%;
+                min-width: 0;
+                max-height: 180px;
+                border-right: 0;
+                border-bottom: 1px solid #dfe2e8;
+            }
+        }
     </style>
 </head>
 <body>
@@ -642,6 +752,16 @@
         <button class="tts-opt" data-mode="local">本机语音</button>
         <select id="voiceSelect" class="voice-select" style="display:none;"></select>
     </div>
+
+    <!-- 会话 + 主面板工作区 -->
+    <div class="workspace" id="workspace">
+        <aside class="conversation-sidebar" aria-label="会话历史">
+            <div class="conversation-toolbar">
+                <strong>会话</strong>
+                <button type="button" id="newConversationBtn" title="新建会话">+</button>
+            </div>
+            <div id="conversationList"></div>
+        </aside>
 
     <!-- 主面板 -->
     <div class="main-panel" id="mainPanel">
@@ -670,8 +790,21 @@
                 <option value="normal">普通聊天</option>
                 <option value="knowledge">仅知识库</option>
                 <option value="hybrid">混合问答</option>
-                <option value="deep_research" disabled>深度研究（后续开放）</option>
+                <option value="deep_research">深度研究</option>
             </select>
+
+            <div id="researchHistoryWrap" hidden>
+                <label for="researchHistorySelect">研究历史</label>
+                <select id="researchHistorySelect">
+                    <option value="">选择历史研究</option>
+                </select>
+                <button
+                    type="button"
+                    id="deleteResearchHistoryBtn"
+                    title="删除选中的研究历史"
+                    disabled
+                >删除</button>
+            </div>
 
             <div id="knowledgePickerWrap" hidden>
                 <label for="knowledgeBaseSelect">知识库</label>
@@ -689,7 +822,7 @@
             </div>
         </div>
 
-        <!-- 输入行 -->
+        <!-- 输入行：固定在聊天区域下方，研究报告上方 -->
         <div class="input-row" style="margin-top:4px;">
             <div class="text-input-wrap">
                 <input
@@ -703,7 +836,30 @@
             <button class="mic-btn" id="micBtn" title="按住说话">&#127908;</button>
         </div>
 
+        <!-- 深度研究区域 -->
+        <section class="research-panel" id="researchPanel" hidden>
+            <div class="research-header">
+                <div>
+                    <strong>深度研究</strong>
+                    <div id="researchQuery"></div>
+                </div>
+                <button type="button" id="cancelResearchBtn" hidden>取消</button>
+            </div>
+            <div class="research-progress">
+                <progress id="researchProgress" max="100" value="0"></progress>
+                <span id="researchStep">等待开始</span>
+            </div>
+            <section id="researchPlan" class="research-plan" hidden>
+                <h3>研究计划</h3>
+                <p id="researchScope"></p>
+                <ol id="researchSubtasks"></ol>
+            </section>
+            <article id="researchReport"></article>
+            <div id="researchSources"></div>
+        </section>
+
         <div class="status-text" id="statusText"></div>
+    </div>
     </div>
 
     <!-- API 面板 -->
@@ -757,8 +913,36 @@ const knowledgePickerWrap = document.getElementById("knowledgePickerWrap");
 const knowledgeBaseSelect = document.getElementById("knowledgeBaseSelect");
 const refreshKnowledgeBtn = document.getElementById("refreshKnowledgeBtn");
 
-const selectableChatModes = new Set(["auto","normal","knowledge","hybrid"]);
+const selectableChatModes = new Set([
+    "auto", "normal", "knowledge", "hybrid", "deep_research"
+]);
 const storedChatMode = localStorage.getItem("chatMode") || "normal";
+
+const researchPanel = document.getElementById("researchPanel");
+const researchQuery = document.getElementById("researchQuery");
+const researchProgress = document.getElementById("researchProgress");
+const researchStep = document.getElementById("researchStep");
+const researchReport = document.getElementById("researchReport");
+const researchSources = document.getElementById("researchSources");
+const cancelResearchBtn = document.getElementById("cancelResearchBtn");
+const conversationList = document.getElementById("conversationList");
+const newConversationBtn = document.getElementById("newConversationBtn");
+const researchPlan = document.getElementById("researchPlan");
+const researchScope = document.getElementById("researchScope");
+const researchSubtasks = document.getElementById("researchSubtasks");
+const researchHistoryWrap = document.getElementById("researchHistoryWrap");
+const researchHistorySelect = document.getElementById("researchHistorySelect");
+const deleteResearchHistoryBtn = document.getElementById("deleteResearchHistoryBtn");
+
+let activeResearchTaskId = null;
+let researchPollTimer = null;
+let activeConversationId = localStorage.getItem("activeConversationId") || "";
+let activeConversationItems = [];
+let displayedResearchTaskId = null;
+let pendingResearchKey = null;
+let researchSubmitInFlight = false;
+let researchPollFailures = 0;
+const MAX_RESEARCH_POLL_FAILURES = 10;
 let activeChatMode = selectableChatModes.has(storedChatMode)
     ? storedChatMode
     : "normal";
@@ -771,11 +955,424 @@ let personaDirty = false;
 let streamBuffer = "";    // 当前流式响应的累积文字
 let streamEl = null;      // 当前流式气泡 DOM 引用
 
+async function createConversation(title = "新对话") {
+    const response = await fetch("/api/conversations", {
+        method: "POST",
+        credentials: "include",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({title})
+    });
+    if (!response.ok) throw new Error("创建会话失败");
+    const conversation = await response.json();
+    activeConversationId = conversation.id;
+    localStorage.setItem("activeConversationId", activeConversationId);
+    await loadConversations();
+    clearChatMessages();
+    clearResearchPanel();
+    return conversation;
+}
+
+async function ensureConversation() {
+    if (activeConversationId) return activeConversationId;
+    const response = await fetch("/api/conversations", {
+        credentials: "include"
+    });
+    if (!response.ok) throw new Error("读取会话失败");
+    const conversations = await response.json();
+    if (conversations.length) {
+        activeConversationId = conversations[0].id;
+        localStorage.setItem("activeConversationId", activeConversationId);
+        return activeConversationId;
+    }
+    return (await createConversation()).id;
+}
+
+function clearChatMessages() {
+    chatArea.textContent = "";
+    chatEmpty.style.display = "";
+}
+
+function clearResearchPanel() {
+    stopResearchPolling();
+    activeResearchTaskId = null;
+    displayedResearchTaskId = null;
+    researchPanel.hidden = true;
+    researchQuery.textContent = "";
+    researchProgress.value = 0;
+    researchStep.textContent = "等待开始";
+    researchReport.textContent = "";
+    researchSources.textContent = "";
+    researchPlan.hidden = true;
+    researchScope.textContent = "";
+    researchSubtasks.textContent = "";
+    cancelResearchBtn.hidden = true;
+    localStorage.removeItem("activeResearchTaskId");
+    localStorage.removeItem("lastResearchTaskId");
+    deleteResearchHistoryBtn.disabled = true;
+}
+
+async function restoreResearchForConversation(items) {
+    if (activeChatMode !== "deep_research") return;
+    const taskId = [...items]
+        .reverse()
+        .find(item => item.research_task_id)?.research_task_id;
+    if (!taskId) return;
+
+    activeResearchTaskId = taskId;
+    localStorage.setItem("activeResearchTaskId", taskId);
+    await pollResearchTask();
+}
+
+async function loadResearchHistory() {
+    researchHistorySelect.textContent = "";
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "选择历史研究";
+    researchHistorySelect.appendChild(emptyOption);
+    deleteResearchHistoryBtn.disabled = true;
+
+    try {
+        const response = await fetch("/api/research-tasks", {
+            credentials: "include"
+        });
+        if (!response.ok) return;
+        const tasks = await response.json();
+        for (const task of tasks) {
+            const option = document.createElement("option");
+            option.value = task.id;
+            const date = task.created_at
+                ? new Date(task.created_at).toLocaleString()
+                : "";
+            option.textContent = `[${task.status}] ${task.query || "未命名研究"}`
+                + (date ? ` · ${date}` : "");
+            option.dataset.status = task.status;
+            researchHistorySelect.appendChild(option);
+        }
+    } catch (_) {
+        statusText.textContent = "研究历史暂时无法加载";
+        statusText.className = "status-text error";
+    }
+}
+
+async function openResearchHistory(taskId) {
+    if (!taskId) {
+        clearResearchPanel();
+        await restoreResearchForConversation(activeConversationItems);
+        return;
+    }
+
+    clearResearchPanel();
+    activeResearchTaskId = taskId;
+    await pollResearchTask();
+}
+
+async function deleteResearchHistory() {
+    const taskId = researchHistorySelect.value;
+    if (!taskId) return;
+    const option = researchHistorySelect.selectedOptions[0];
+    if (["pending", "running"].includes(option?.dataset.status)) {
+        statusText.textContent = "运行中的研究任务不能删除，请先取消";
+        statusText.className = "status-text error";
+        return;
+    }
+    if (!window.confirm("确定删除这条研究历史吗？报告和引用来源将被删除。")) {
+        return;
+    }
+
+    const response = await fetch(`/api/research-tasks/${taskId}`, {
+        method: "DELETE",
+        credentials: "include"
+    });
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        statusText.textContent = data.detail || "删除研究历史失败";
+        statusText.className = "status-text error";
+        return;
+    }
+
+    const wasDisplayed = displayedResearchTaskId === taskId;
+    await loadResearchHistory();
+    if (activeConversationId) {
+        await openConversation(activeConversationId);
+    } else if (wasDisplayed) {
+        clearResearchPanel();
+    }
+    statusText.textContent = "研究历史已删除";
+    statusText.className = "status-text";
+}
+
+async function openConversation(conversationId) {
+    activeConversationId = conversationId;
+    localStorage.setItem("activeConversationId", conversationId);
+    clearResearchPanel();
+    const response = await fetch(
+        `/api/conversations/${conversationId}/messages`,
+        {credentials: "include"}
+    );
+    if (!response.ok) throw new Error("读取会话消息失败");
+    const items = await response.json();
+    activeConversationItems = items;
+    clearChatMessages();
+    for (const item of items) {
+        const el = appendMessage(
+            item.content,
+            item.role,
+            item.resolved_mode || item.requested_mode
+        );
+        if (item.role === "assistant" && item.citations?.length) {
+            appendCitationCards(el, item.citations);
+        }
+    }
+    await restoreResearchForConversation(items);
+    await loadConversations();
+}
+
+async function loadConversations() {
+    const response = await fetch("/api/conversations", {
+        credentials: "include"
+    });
+    if (!response.ok) return;
+    const items = await response.json();
+    conversationList.textContent = "";
+    for (const item of items) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "conversation-item";
+        if (item.id === activeConversationId) button.classList.add("active");
+        const title = document.createElement("span");
+        title.className = "conversation-title";
+        title.textContent = item.title;
+        button.appendChild(title);
+        button.addEventListener("click", () => openConversation(item.id));
+        conversationList.appendChild(button);
+    }
+}
+
+newConversationBtn.addEventListener("click", async () => {
+    await createConversation();
+});
+
+function stopResearchPolling() {
+    if (researchPollTimer !== null) {
+        window.clearTimeout(researchPollTimer);
+        researchPollTimer = null;
+    }
+}
+
+function safeResearchUrl(value) {
+    try {
+        const parsed = new URL(value, window.location.origin);
+        return ["http:", "https:"].includes(parsed.protocol)
+            ? parsed.href
+            : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function renderResearchSources(sources) {
+    researchSources.textContent = "";
+    for (const source of sources) {
+        const card = document.createElement("div");
+        card.className = "citation-card";
+        const title = document.createElement("strong");
+        title.textContent = `${source.source_id} · ${source.title}`;
+        const excerpt = document.createElement("p");
+        excerpt.textContent = source.excerpt || "";
+        card.append(title, excerpt);
+
+        const safeUrl = source.url ? safeResearchUrl(source.url) : null;
+        if (safeUrl) {
+            const link = document.createElement("a");
+            link.href = safeUrl;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = "打开来源";
+            card.appendChild(link);
+        }
+        researchSources.appendChild(card);
+    }
+}
+
+function renderResearchFailure(message) {
+    researchReport.textContent = "";
+    const box = document.createElement("div");
+    box.className = "research-error";
+    const title = document.createElement("strong");
+    title.textContent = "执行失败";
+    const reason = document.createElement("p");
+    reason.textContent = `失败原因：${message || "未提供具体原因，请稍后重试"}`;
+    box.append(title, reason);
+    researchReport.appendChild(box);
+}
+
+function showResearchTask(task) {
+    displayedResearchTaskId = task.id || null;
+    if (activeChatMode === "deep_research") {
+        researchHistorySelect.value = task.id || "";
+        const selected = researchHistorySelect.selectedOptions[0];
+        deleteResearchHistoryBtn.disabled = !selected
+            || ["pending", "running"].includes(selected.dataset.status);
+    }
+    researchSubtasks.textContent = "";
+    if (task.plan) {
+        researchPlan.hidden = false;
+        researchScope.textContent = task.plan.scope || "";
+        for (const subtask of task.plan.subtasks || []) {
+            const item = document.createElement("li");
+            item.className = `research-subtask-${subtask.status}`;
+            item.textContent = `${subtask.query} · ${subtask.status}`;
+            researchSubtasks.appendChild(item);
+        }
+    } else {
+        researchPlan.hidden = true;
+        researchScope.textContent = "";
+    }
+
+    researchPanel.hidden = false;
+    researchQuery.textContent = task.query || "";
+    researchProgress.value = Number(task.progress || 0);
+    researchStep.textContent = task.current_step || task.status;
+
+    if (task.status === "completed") {
+        researchReport.innerHTML = renderMd(task.report?.markdown || "");
+        renderResearchSources(task.sources || []);
+        cancelResearchBtn.hidden = true;
+        activeResearchTaskId = null;
+        localStorage.removeItem("activeResearchTaskId");
+        stopResearchPolling();
+        return;
+    }
+
+    if (task.status === "failed") {
+        renderResearchFailure(task.error_message);
+        researchSources.textContent = "";
+        cancelResearchBtn.hidden = true;
+        activeResearchTaskId = null;
+        localStorage.removeItem("activeResearchTaskId");
+        stopResearchPolling();
+        return;
+    }
+
+    if (task.status === "cancelled") {
+        researchReport.textContent = "任务已取消";
+        researchSources.textContent = "";
+        cancelResearchBtn.hidden = true;
+        activeResearchTaskId = null;
+        localStorage.removeItem("activeResearchTaskId");
+        stopResearchPolling();
+        return;
+    }
+
+    activeResearchTaskId = task.id;
+    localStorage.setItem("activeResearchTaskId", task.id);
+    researchReport.textContent = "";
+    researchSources.textContent = "";
+    cancelResearchBtn.hidden = false;
+}
+
+async function startResearch(query) {
+    if (researchSubmitInFlight || activeResearchTaskId) {
+        throw new Error("已有研究任务正在运行，请先等待或取消");
+    }
+    researchSubmitInFlight = true;
+    sendBtn.disabled = true;
+    try {
+        await ensureConversation();
+        pendingResearchKey = pendingResearchKey || crypto.randomUUID();
+        const response = await fetch("/api/research-tasks", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+                "Content-Type": "application/json",
+                "Idempotency-Key": pendingResearchKey
+            },
+            body: JSON.stringify({
+                query,
+                conversation_id: activeConversationId,
+                knowledge_base_id: activeKnowledgeBaseId || null
+            })
+        });
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.detail || "研究任务创建失败");
+        }
+        const task = await response.json();
+        pendingResearchKey = null;
+        researchPollFailures = 0;
+        showResearchTask({
+            ...task,
+            query,
+            progress: 0,
+            current_step: "等待处理",
+            sources: []
+        });
+        await pollResearchTask();
+    } finally {
+        researchSubmitInFlight = false;
+        sendBtn.disabled = false;
+    }
+}
+
+async function pollResearchTask() {
+    if (!activeResearchTaskId) return;
+    try {
+        const response = await fetch(
+            `/api/research-tasks/${activeResearchTaskId}`,
+            {credentials: "include"}
+        );
+        if (response.status === 401) {
+            window.location.replace("/login");
+            return;
+        }
+        if (response.status === 404) {
+            activeResearchTaskId = null;
+            localStorage.removeItem("activeResearchTaskId");
+            localStorage.removeItem("lastResearchTaskId");
+            researchPanel.hidden = true;
+            stopResearchPolling();
+            return;
+        }
+        if (!response.ok) throw new Error("任务查询失败");
+        researchPollFailures = 0;
+        const task = await response.json();
+        showResearchTask(task);
+        if (activeResearchTaskId) {
+            researchPollTimer = window.setTimeout(pollResearchTask, 2000);
+        }
+    } catch (_) {
+        researchPollFailures += 1;
+        if (researchPollFailures > MAX_RESEARCH_POLL_FAILURES) {
+            researchStep.textContent = "连接失败次数过多，请刷新页面重试";
+            stopResearchPolling();
+            return;
+        }
+        researchStep.textContent = "连接暂时中断，正在重试";
+        const delay = Math.min(
+            30000,
+            3000 * (2 ** (researchPollFailures - 1))
+        );
+        researchPollTimer = window.setTimeout(pollResearchTask, delay);
+    }
+}
+
+cancelResearchBtn.addEventListener("click", async () => {
+    if (!activeResearchTaskId) return;
+    cancelResearchBtn.disabled = true;
+    const response = await fetch(
+        `/api/research-tasks/${activeResearchTaskId}/cancel`, {
+        method: "POST",
+        credentials: "include"
+    });
+    cancelResearchBtn.disabled = false;
+    if (response.ok) await pollResearchTask();
+});
+
 // ==================== 标签切换 ====================
 tabChat.addEventListener("click", () => {
     tabChat.classList.add("active");
     tabApi.classList.remove("active");
-    mainPanel.classList.remove("hidden");
+    mainPanel.parentElement.classList.remove("hidden");
     apiPanel.classList.remove("show");
     savePersonaIfDirty();
 });
@@ -783,7 +1380,7 @@ tabChat.addEventListener("click", () => {
 tabApi.addEventListener("click", () => {
     tabApi.classList.add("active");
     tabChat.classList.remove("active");
-    mainPanel.classList.add("hidden");
+    mainPanel.parentElement.classList.add("hidden");
     apiPanel.classList.add("show");
     savePersonaIfDirty();
 });
@@ -1028,7 +1625,17 @@ function applyChatMode(mode) {
     localStorage.setItem("chatMode", mode);
     chatModeSelect.value = mode;
 
-    const needsKnowledgeBase = ["auto", "knowledge", "hybrid"].includes(mode);
+    if (mode !== "deep_research") {
+        researchHistoryWrap.hidden = true;
+        researchHistorySelect.value = "";
+        clearResearchPanel();
+    } else {
+        researchHistoryWrap.hidden = false;
+        loadResearchHistory();
+        restoreResearchForConversation(activeConversationItems);
+    }
+
+    const needsKnowledgeBase = ["auto", "knowledge", "hybrid", "deep_research"].includes(mode);
     knowledgePickerWrap.hidden = !needsKnowledgeBase;
 
     const placeholders = {
@@ -1047,10 +1654,19 @@ chatModeSelect.addEventListener("change", async event => {
         return;
     }
     applyChatMode(event.target.value);
-    if (["auto", "knowledge", "hybrid"].includes(activeChatMode)) {
+    if (["auto", "knowledge", "hybrid", "deep_research"].includes(activeChatMode)) {
         await loadKnowledgeBases();
     }
 });
+
+researchHistorySelect.addEventListener("change", async event => {
+    const selected = event.target.selectedOptions[0];
+    deleteResearchHistoryBtn.disabled = !event.target.value
+        || ["pending", "running"].includes(selected?.dataset.status);
+    await openResearchHistory(event.target.value);
+});
+
+deleteResearchHistoryBtn.addEventListener("click", deleteResearchHistory);
 
 knowledgeBaseSelect.addEventListener("change", event => {
     activeKnowledgeBaseId = event.target.value;
@@ -1064,14 +1680,28 @@ knowledgeBaseSelect.addEventListener("change", event => {
 refreshKnowledgeBtn.addEventListener("click", loadKnowledgeBases);
 
 // ==================== 文字发送 ====================
-function sendText(text) {
+async function sendText(text) {
     if (!text || responseInProgress) return;
+
+    if (activeChatMode === "deep_research") {
+        appendMessage(text, "user", "deep_research");
+        try {
+            await startResearch(text);
+            statusText.textContent = "研究任务已创建，可切换模式继续聊天";
+        } catch (error) {
+            statusText.textContent = error.message;
+            statusText.className = "status-text error";
+        }
+        return;
+    }
+
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         statusText.textContent = "连接已断开，正在重连...";
         appendMessage("(消息未发送：连接断开)", "assistant", activeChatMode);
         return;
     }
-    if (["auto", "knowledge", "hybrid"].includes(activeChatMode)&& !activeKnowledgeBaseId) {
+    if (["auto", "knowledge", "hybrid"].includes(activeChatMode)
+            && !activeKnowledgeBaseId) {
         statusText.textContent = "请先选择一个知识库";
         knowledgeBaseSelect.focus();
         return;
@@ -1089,9 +1719,11 @@ function sendText(text) {
     knowledgeBaseSelect.disabled = true;
     appendMessage(text, "user", activeChatMode);
 
+    await ensureConversation();
     ws.send(JSON.stringify({
         action: "chat",
         text,
+        conversation_id: activeConversationId,
         mode: activeChatMode,
         knowledge_base_id: ["auto", "knowledge", "hybrid"].includes(
             activeChatMode
@@ -1628,9 +2260,12 @@ async function init() {
     await loadApiConfig();
 
     applyChatMode(activeChatMode);
-    if (["auto", "knowledge", "hybrid"].includes(activeChatMode)) {
+    if (["auto", "knowledge", "hybrid", "deep_research"].includes(activeChatMode)) {
         await loadKnowledgeBases();
     }
+    await ensureConversation();
+    await loadConversations();
+    await openConversation(activeConversationId);
 
     if ("speechSynthesis" in window) {
         populateVoices();

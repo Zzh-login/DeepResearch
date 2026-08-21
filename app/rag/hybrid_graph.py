@@ -71,6 +71,7 @@ class HybridGraph:
             max_tokens=2400,
             max_retries=2,
             timeout=settings.hybrid_model_timeout_seconds,
+            extra_body={"thinking": {"type": "disabled"}},
         )
         self._graph = self._build_graph()
 

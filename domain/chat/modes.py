@@ -14,6 +14,7 @@ ENABLED_CHAT_MODES = frozenset(
         ChatMode.NORMAL,
         ChatMode.KNOWLEDGE,
         ChatMode.HYBRID,
+        ChatMode.DEEP_RESEARCH,
         ChatMode.AUTO,
     }
 )

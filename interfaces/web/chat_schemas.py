@@ -16,6 +16,7 @@ KB_REQUIRED_MODES = {
 class ChatRequest(BaseModel):
     action: Literal["chat"] = "chat"
     text: str = Field(min_length=1, max_length=10000)
+    conversation_id: UUID
     mode: ChatMode = ChatMode.NORMAL
     knowledge_base_id: UUID | None = None
     tts_mode: Literal["cloud", "local"] = "cloud"

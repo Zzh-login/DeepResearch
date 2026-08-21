@@ -1,10 +1,35 @@
 """ASR 客户端 —— 基于 SenseVoiceSmall 流式识别"""
 
 import json
+import os
+from pathlib import Path
+
 from funasr import AutoModel
 
 # 全局单例，服务启动时加载一次
 _model = None
+
+
+def resolve_model_path() -> str:
+    """Resolve a local SenseVoice model before considering network access."""
+    configured = os.getenv("ASR_MODEL_PATH", "").strip()
+    candidates = [
+        Path(configured).expanduser() if configured else None,
+        Path.home() / ".cache" / "modelscope" / "iic" / "SenseVoiceSmall",
+        Path("models") / "SenseVoiceSmall",
+    ]
+    for candidate in candidates:
+        if candidate is not None and (candidate / "model.pt").is_file():
+            return str(candidate.resolve())
+
+    allow_download = os.getenv("ASR_ALLOW_DOWNLOAD", "0").strip().lower()
+    if allow_download in {"1", "true", "yes", "on"}:
+        return "iic/SenseVoiceSmall"
+
+    raise RuntimeError(
+        "未找到本地 SenseVoiceSmall 模型；请设置 ASR_MODEL_PATH，"
+        "或显式设置 ASR_ALLOW_DOWNLOAD=1 允许联网下载"
+    )
 
 
 def get_model():
@@ -18,8 +43,9 @@ def get_model():
     """
     global _model
     if _model is None:
+        model_path = resolve_model_path()
         _model = AutoModel(
-            model="iic/SenseVoiceSmall",
+            model=model_path,
             disable_update=True,
             trust_remote_code=True,
         )
@@ -27,8 +53,8 @@ def get_model():
 
 
 def load_model():
-    """启动时预加载 ASR 模型，阻塞直到加载完成（首次需下载约 500MB）。"""
-    print("[ASR] 正在加载 SenseVoiceSmall 模型（首次下载约 500MB）...")
+    """启动时预加载 ASR 模型，默认只使用本地文件。"""
+    print(f"[ASR] 正在加载 SenseVoiceSmall：{resolve_model_path()}")
     get_model()
     print("[ASR] 模型就绪")
 

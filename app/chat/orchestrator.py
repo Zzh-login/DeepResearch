@@ -253,6 +253,11 @@ class ManualChatOrchestrator:
             )
 
         requested_mode = request.mode
+        if requested_mode == ChatMode.DEEP_RESEARCH:
+            raise ChatProtocolError(
+                "mode_not_available",
+                "深度研究请通过研究任务接口发起",
+            )
         decision = None
         resolved_mode = ResolvedChatMode(requested_mode.value) \
             if requested_mode != ChatMode.AUTO \

@@ -112,7 +112,7 @@ class Stage5OrchestratorTests(unittest.IsolatedAsyncioTestCase):
         session = FakeSession()
         events = await self.collect(
             self.build(router=router),
-            ChatRequest(text="你好", mode="normal"),
+            ChatRequest(text="你好", mode="normal", conversation_id=uuid4()),
             session,
         )
         self.assertTrue(session.called)
@@ -128,7 +128,7 @@ class Stage5OrchestratorTests(unittest.IsolatedAsyncioTestCase):
         request = ChatRequest(
             text="结合资料回答",
             mode="hybrid",
-            knowledge_base_id=uuid4(),
+            knowledge_base_id=uuid4(), conversation_id=uuid4(),
         )
         with patch(
             "app.chat.orchestrator.PgKnowledgeRepository",
@@ -154,7 +154,7 @@ class Stage5OrchestratorTests(unittest.IsolatedAsyncioTestCase):
         request = ChatRequest(
             text="资料问题",
             mode="auto",
-            knowledge_base_id=uuid4(),
+            knowledge_base_id=uuid4(), conversation_id=uuid4(),
         )
         with patch(
             "app.chat.orchestrator.PgKnowledgeRepository",

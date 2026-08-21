@@ -95,7 +95,7 @@ class ManualChatOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             settings=get_settings(),
         )
         session = FakeSession()
-        request = ChatRequest(text="你好", mode="normal")
+        request = ChatRequest(text="你好", mode="normal", conversation_id=uuid4())
 
         events = [
             item
@@ -117,7 +117,7 @@ class ManualChatOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             settings=get_settings(),
         )
         session = FakeSession()
-        request = ChatRequest(text="研究这个问题", mode="deep_research")
+        request = ChatRequest(text="研究这个问题", mode="deep_research", conversation_id=uuid4())
 
         with self.assertRaises(ChatProtocolError) as context:
             _ = [
@@ -143,7 +143,7 @@ class ManualChatOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         request = ChatRequest(
             text="文档说了什么",
             mode="knowledge",
-            knowledge_base_id=uuid4(),
+            knowledge_base_id=uuid4(), conversation_id=uuid4(),
         )
 
         with self.assertRaises(ChatProtocolError) as context:
@@ -179,7 +179,7 @@ class ManualChatOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             request = ChatRequest(
                 text="文档说了什么",
                 mode="knowledge",
-                knowledge_base_id=kb_id,
+                knowledge_base_id=kb_id, conversation_id=uuid4(),
             )
             events = [
                 item
@@ -217,7 +217,7 @@ class ManualChatOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             request = ChatRequest(
                 text="读取别人的资料",
                 mode="knowledge",
-                knowledge_base_id=uuid4(),
+                knowledge_base_id=uuid4(), conversation_id=uuid4(),
             )
 
             with self.assertRaises(ChatProtocolError) as context:
@@ -250,7 +250,7 @@ class ManualChatOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             request = ChatRequest(
                 text="数据库中断了",
                 mode="knowledge",
-                knowledge_base_id=uuid4(),
+                knowledge_base_id=uuid4(), conversation_id=uuid4(),
             )
 
             with self.assertRaises(ChatProtocolError) as context:

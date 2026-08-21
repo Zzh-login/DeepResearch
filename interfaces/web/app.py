@@ -27,9 +27,15 @@ from app.rag.graph import RagGraph
 
 from app.chat.orchestrator import ChatProtocolError, ManualChatOrchestrator
 from interfaces.web.chat_schemas import ChatRequest, TtsRequest
+from infrastructure.conversation.pg_repository import PgConversationRepository
 
 from app.chat.auto_router import AutoChatRouter
 from app.rag.hybrid_graph import HybridGraph
+
+from infrastructure.research.pg_repository import PgResearchRepository
+from interfaces.web.research_routes import router as research_router
+
+from interfaces.web.conversation_routes import router as conversation_router
 
 async def _warmup_embedding() -> None:
     """Warm the local embedding model without making app startup depend on it."""
@@ -57,6 +63,7 @@ async def _warmup_asr(app: FastAPI) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    app.state.settings = settings
     app.state.rag_graph = None
     app.state.rag_status = "unavailable"
     app.state.rag_error = None
@@ -138,6 +145,10 @@ app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
 
 # 注册知识库 REST API 路由
 app.include_router(knowledge_router)
+# 注册知识库搜索 API 路由
+app.include_router(research_router)
+# 注册对话 REST API 路由
+app.include_router(conversation_router)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -200,10 +211,18 @@ async def health(request: Request):
                 ")"
             )
 
+        research_worker_ok = await PgResearchRepository(
+            database
+        ).has_healthy_worker(
+            request.app.state.settings.research_worker_stale_seconds
+        )
+
         return {
             "status": "ok",
             "postgres": "ok",
             "pgvector": "ok" if has_vector else "missing",
+            "research_worker": "ok" if research_worker_ok else "stopped",
+            "asr": getattr(app.state, "asr_status", "loading"),
         }
     except Exception as exc:
         return JSONResponse(
@@ -450,6 +469,31 @@ async def websocket_endpoint(ws: WebSocket):
                     }
                 )
                 continue
+            conversation_repo = PgConversationRepository(
+                ws.app.state.database,
+                user_id,
+            )
+            if await conversation_repo.get_owned(
+                chat_request.conversation_id
+            ) is None:
+                await ws.send_json(
+                    {
+                        "type": "chat.error",
+                        "mode": chat_request.mode.value,
+                        "code": "conversation_not_found",
+                        "message": "会话不存在或无权访问",
+                    }
+                )
+                continue
+
+            await conversation_repo.add_message(
+                conversation_id=chat_request.conversation_id,
+                role="user",
+                content=chat_request.text,
+                requested_mode=chat_request.mode.value,
+                resolved_mode=None,
+                knowledge_base_id=chat_request.knowledge_base_id,
+            )
 
             try:
                 async for event in orchestrator.run(
@@ -465,6 +509,20 @@ async def websocket_endpoint(ws: WebSocket):
                         and event.get("text")
                         and not event.get("error")
                     ):
+                        await conversation_repo.add_message(
+                            conversation_id=chat_request.conversation_id,
+                            role="assistant",
+                            content=event.get("text", ""),
+                            requested_mode=chat_request.mode.value,
+                            resolved_mode=event.get("mode"),
+                            knowledge_base_id=chat_request.knowledge_base_id,
+                            route_metadata={
+                                "route_source": event.get("route_source"),
+                                "route_confidence": event.get("route_confidence"),
+                                "route_reason": event.get("route_reason"),
+                            },
+                            citations=event.get("citations", []),
+                        )  
                         audio = ""
                         try:
                             audio = (

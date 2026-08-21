@@ -22,11 +22,12 @@
   - BGE-M3 未下载时给出清晰指引（不静默失败）
 """
 
-import os
-import json
 import hashlib
 import asyncio
 from typing import Optional, List, Dict, Any, Callable, Awaitable
+
+from infrastructure.config.settings import get_settings
+from infrastructure.database.codecs import register_json_codecs
 
 from infrastructure.embedding.bge_m3 import (
     BGE_M3_DIM,
@@ -65,16 +66,13 @@ class VectorMemory:
         """初始化向量记忆存储。
 
         Args:
-            dsn: PostgreSQL 连接串；缺省时读环境变量 PG_DSN，再缺省用
-                 localhost:15432/robot 默认串。
+            dsn: PostgreSQL 连接串；缺省时读取项目 Settings.pg_dsn，
+                 由 .env 的 PG_DSN 覆盖。
             embedding_dim: 向量维度（默认 1024，与 BGE-M3 一致）。
             embed_fn: 可插拔的异步 embedding 函数；为 None 时走默认 BGE-M3。
         连接池与建表均惰性创建（首次 _get_pool 时），构造本身不连库。
         """
-        self._dsn = dsn or os.getenv(
-            "PG_DSN",
-            "postgresql://postgres:postgres@localhost:15432/robot",
-        )
+        self._dsn = dsn or get_settings().pg_dsn
         self._embedding_dim = embedding_dim
         self._embed_fn: Optional[EmbedFn] = embed_fn
         self._pool = None
@@ -83,9 +81,10 @@ class VectorMemory:
     # ---- 连接 ----
 
     async def _init_conn(self, conn):
-        """连接池 init 回调：为每条连接注册 pgvector 类型"""
+        """连接池 init 回调：为每条连接注册 pgvector 和 JSON 类型。"""
         from pgvector.asyncpg import register_vector
         await register_vector(conn)
+        await register_json_codecs(conn)
 
     async def _get_pool(self):
         """惰性创建连接池 + 确保表存在"""
@@ -182,7 +181,7 @@ class VectorMemory:
                 summary,
                 full_text or "",
                 embedding,  # list[float] → pgvector 编码器自动转为 vector
-                json.dumps(metadata or {}),
+                metadata or {},
             )
         return content_hash
 
@@ -239,7 +238,7 @@ class VectorMemory:
             {
                 "summary": row["summary"],
                 "score": round(row["score"], 4),
-                "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
+                "metadata": row["metadata"] or {},
             }
             for row in rows
         ]

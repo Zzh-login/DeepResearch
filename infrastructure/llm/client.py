@@ -157,6 +157,7 @@ class LLMClient:
                     stream=stream,
                     tools=tools,
                     tool_choice=tool_choice,
+                    extra_body={"thinking": {"type": "disabled"}},
                 ),
                 timeout=60,  # LLM 调用超时 60 秒
             )
@@ -228,6 +229,7 @@ class LLMClient:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=True,
+                extra_body={"thinking": {"type": "disabled"}},
             )
             async for chunk in stream:
                 delta = chunk.choices[0].delta

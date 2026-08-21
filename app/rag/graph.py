@@ -79,6 +79,7 @@ class RagGraph:
             max_tokens=2048,
             max_retries=2,
             timeout=settings.rag_model_timeout_seconds,
+            extra_body={"thinking": {"type": "disabled"}},
         )
         self._graph = self._build_graph()
 

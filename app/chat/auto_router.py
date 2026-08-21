@@ -79,6 +79,7 @@ class AutoChatRouter:
             max_tokens=180,
             max_retries=1,
             timeout=settings.auto_router_timeout_seconds,
+            extra_body={"thinking": {"type": "disabled"}},
         )
 
     @staticmethod
