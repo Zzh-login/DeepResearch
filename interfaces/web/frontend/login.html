@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>登录 - 语音对话</title>
+    <title>登录 - DeepResearch</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-            background: linear-gradient(160deg, #1a0a2e 0%, #2d1b69 40%, #16213e 100%);
+            background: #f1f4f1;
             min-height: 100vh;
             display: flex;
             justify-content: center;
@@ -79,7 +79,7 @@
             padding: 12px;
             border: none;
             border-radius: 12px;
-            background: linear-gradient(135deg, #6a3de8, #9b59b6);
+            background: #276749;
             color: #fff;
             font-size: 15px;
             cursor: pointer;
@@ -104,6 +104,75 @@
         }
 
         .toggle a:hover { color: #e0d0ff; }
+
+        /* ── 黑白登录 / 注册主题 ── */
+        :root {
+            --auth-bg: #f2f2f2;
+            --auth-surface: #ffffff;
+            --auth-border: #d7d7d7;
+            --auth-text: #171717;
+            --auth-muted: #6b6b6b;
+            --auth-primary: #111111;
+            --auth-primary-hover: #333333;
+            --auth-soft: #e9e9e9;
+            --auth-danger: #222222;
+        }
+
+        body {
+            background: var(--auth-bg);
+            color: var(--auth-text);
+            align-items: center;
+        }
+
+        .card {
+            max-width: 420px;
+            background: var(--auth-surface);
+            border: 1px solid var(--auth-border);
+            border-radius: 10px;
+            padding: 36px 34px 32px;
+            box-shadow: 0 18px 45px rgba(0, 0, 0, 0.11);
+        }
+
+        h2 {
+            color: var(--auth-text);
+            font-size: 24px;
+            font-weight: 650;
+            letter-spacing: 0;
+            margin-bottom: 28px;
+        }
+
+        .group { margin-bottom: 18px; }
+        .group label { color: var(--auth-muted); margin-bottom: 7px; }
+        .group input {
+            padding: 12px 14px;
+            background: #f7f7f7;
+            border: 1px solid var(--auth-border);
+            border-radius: 6px;
+            color: var(--auth-text);
+        }
+        .group input:focus {
+            border-color: var(--auth-primary);
+            box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.12);
+        }
+        .group input::placeholder { color: #969696; }
+        .error { color: var(--auth-danger); }
+
+        .btn {
+            padding: 12px;
+            border-radius: 6px;
+            background: var(--auth-primary);
+            margin-top: 5px;
+        }
+        .btn:hover { background: var(--auth-primary-hover); opacity: 1; transform: translateY(-1px); }
+        .btn:disabled { opacity: 0.65; cursor: wait; transform: none; }
+        .toggle { color: var(--auth-muted); }
+        .toggle a { color: var(--auth-primary); font-weight: 600; }
+        .toggle a:hover { color: var(--auth-primary-hover); }
+
+        @media (max-width: 480px) {
+            body { padding: 14px; }
+            .card { padding: 30px 22px 26px; }
+        }
     </style>
 </head>
 <body>

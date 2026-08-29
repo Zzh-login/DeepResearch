@@ -422,30 +422,6 @@ class ChatSession:
         self._memory.delete_persona_history(index)
 
     # ════════════════════════════════════════════════════════
-    # LLM API 配置
-    # ════════════════════════════════════════════════════════
-
-    def get_api_config(self) -> Dict[str, Any]:
-        """返回当前 LLM API 配置（含 api_key 掩码、base_url、model 及是否自定义）。"""
-        config = self._llm.get_config()
-        config["custom"] = bool(self._llm._custom_config)
-        return config
-
-    def set_api_config(
-        self, api_key: str = "", base_url: str = "", model: str = ""
-    ) -> None:
-        """更新 LLM API 配置；空字符串参数视为不修改该项（传 None）。"""
-        self._llm.set_config(
-            api_key=api_key or None,
-            base_url=base_url or None,
-            model=model or None,
-        )
-
-    def reset_api_config(self) -> None:
-        """重置 LLM API 配置为默认值（清空自定义项）。"""
-        self._llm.reset_config()
-
-    # ════════════════════════════════════════════════════════
     # 长期记忆管理
     # ════════════════════════════════════════════════════════
 

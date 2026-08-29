@@ -3,7 +3,7 @@ LLM 客户端 —— 对接 OpenAI 兼容 API
 
 技术栈说明：
   - OpenAI SDK：统一接口，兼容 DeepSeek / OpenAI / 自部署
-  - 配置注入：从 .env 读取，支持运行时动态切换
+  - 配置注入：从 .env 读取，由统一 ModelGateway 管理生产模型调用
   - 流式支持：chat_stream() 逐 token 异步产出，供 WS 推前端打字机效果
   - 依赖倒置：不依赖 session / domain，只依赖环境变量
 
@@ -46,7 +46,7 @@ class LLMClient:
     LLM 客户端
 
     职责：
-      1. 管理 API 配置（默认 + 运行时覆盖）
+      1. 使用默认 API 配置调用 OpenAI 兼容服务
       2. 调用 OpenAI 兼容的 chat.completions.create
       3. 返回 LLMResponse（文本 + token 用量）
 
@@ -69,52 +69,15 @@ class LLMClient:
             base_url: API 基地址，默认 https://api.deepseek.com。
             model: 模型名，默认 deepseek-chat。
 
-        说明：构造时仅保存默认配置与运行时覆盖字典（_custom_config），
-        不创建实际网络客户端，按需由 _get_client 懒加载。
+        说明：不创建实际网络客户端，按需由 _get_client 懒加载。
         """
         self._api_key = api_key
         self._base_url = base_url
         self._model = model
-        self._custom_config: Dict[str, Any] = {}
-
-    def set_config(
-        self,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
-    ) -> None:
-        """
-        动态更新配置（运行时切换密钥 / 模型）
-
-        场景：
-          - 用户 A 用自己的 API Key
-          - 用户 B 用系统默认 Key
-          - 临时切换到 GPT-4 做复杂任务
-        """
-        if api_key is not None:
-            self._custom_config["api_key"] = api_key
-        if base_url is not None:
-            self._custom_config["base_url"] = base_url
-        if model is not None:
-            self._custom_config["model"] = model
-
-    def get_config(self) -> Dict[str, str]:
-        """获取当前生效的配置（用于日志/调试）"""
-        return {
-            "api_key": self._custom_config.get("api_key", self._api_key),
-            "base_url": self._custom_config.get("base_url", self._base_url),
-            "model": self._custom_config.get("model", self._model),
-        }
-
-    def reset_config(self) -> None:
-        """恢复默认配置（清除运行时覆盖）"""
-        self._custom_config.clear()
 
     def _get_client(self) -> AsyncOpenAI:
         """根据当前配置创建异步 OpenAI 客户端实例"""
-        api_key = self._custom_config.get("api_key", self._api_key)
-        base_url = self._custom_config.get("base_url", self._base_url)
-        return AsyncOpenAI(api_key=api_key, base_url=base_url)
+        return AsyncOpenAI(api_key=self._api_key, base_url=self._base_url)
 
     async def chat(
         self,
@@ -145,7 +108,7 @@ class LLMClient:
           - finish_reason 为 "tool_calls"（而非 "stop"）
         """
         client = self._get_client()
-        model = self._custom_config.get("model", self._model)
+        model = self._model
 
         try:
             response = await asyncio.wait_for(
@@ -220,7 +183,7 @@ class LLMClient:
           - 流中断（网络抖动/超时）会 raise RuntimeError，调用方应 try/except。
         """
         client = self._get_client()
-        model = self._custom_config.get("model", self._model)
+        model = self._model
 
         try:
             stream = await client.chat.completions.create(

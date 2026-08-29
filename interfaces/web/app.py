@@ -374,30 +374,6 @@ async def remove_persona_history(
     return {"items": session.get_persona_history()}
 
 
-@app.get("/api-config")
-async def get_api_config(
-    request: Request, user_id: str = Depends(get_current_user)
-):
-    """获取当前用户的 API 配置（api_key、base_url、model）。"""
-    return request.app.state.session_manager.get_or_create(user_id).get_api_config()
-
-
-@app.post("/api-config")
-async def set_api_config(request: Request, user_id: str = Depends(get_current_user)):
-    """更新当前用户的 API 配置（api_key、base_url、model）。
-
-    参数: request - 含 api_key、base_url、model 字段的 JSON 请求体。
-    """
-    data = await request.json()
-    session = request.app.state.session_manager.get_or_create(user_id)
-    session.set_api_config(
-        api_key=data.get("api_key", ""),
-        base_url=data.get("base_url", ""),
-        model=data.get("model", ""),
-    )
-    return {"ok": True}
-
-
 @app.get("/history")
 async def get_history(
     request: Request, user_id: str = Depends(get_current_user)
