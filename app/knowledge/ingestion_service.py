@@ -10,7 +10,7 @@ from domain.knowledge.models import DocumentStatus
 from infrastructure.knowledge.pg_repository import PgKnowledgeRepository
 from infrastructure.knowledge.text_splitter import KnowledgeTextSplitter
 from infrastructure.knowledge.loaders.factory import get_loader
-from infrastructure.embedding.bge_m3 import embed_documents
+from domain.model_gateway.contracts import ModelRequestContext
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class IngestionService:
     任意步骤失败时，状态置为 failed 并 re-raise 异常。
     """
 
-    def __init__(self, repo: PgKnowledgeRepository, splitter: KnowledgeTextSplitter) -> None:
+    def __init__(self, repo: PgKnowledgeRepository, splitter: KnowledgeTextSplitter,model_gateway=None) -> None:
         """构造注入。
 
         Args:
@@ -33,6 +33,7 @@ class IngestionService:
         """
         self._repo = repo
         self._splitter = splitter
+        self._model_gateway = model_gateway
 
     async def ingest_document(
         self,
@@ -71,9 +72,18 @@ class IngestionService:
             await self._repo.update_document_status(document_id, DocumentStatus.INDEXING)
 
             # ── 6. 批量向量化 ──
-            embeddings = await embed_documents(
-                [chunk.content for chunk in chunks]
+            if self._model_gateway is None:
+                raise RuntimeError("生产 IngestionService 必须注入 ModelGateway")
+            embedding_result = await self._model_gateway.embed(
+                [chunk.content for chunk in chunks],
+                is_query=False,
+                context=ModelRequestContext(
+                    owner_id=str(document["owner_id"]),
+                    mode="ingestion",
+                    operation="knowledge_document_embedding",
+                ),
             )
+            embeddings = embedding_result.vectors
 
             # ── 7. 事务替换旧 chunks ──
             await self._repo.replace_chunks(

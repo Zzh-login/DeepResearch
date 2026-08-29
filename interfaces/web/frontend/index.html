@@ -586,6 +586,37 @@
             line-height: 1.5;
         }
 
+        .hybrid-diagnostics {
+            margin-top: 12px;
+            padding: 10px 12px;
+            border: 1px solid #f0c9c9;
+            border-radius: 6px;
+            background: #fdf3f3;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .hybrid-diagnostics > summary {
+            cursor: pointer;
+            color: #b4453a;
+            font-weight: 600;
+            outline: none;
+        }
+
+        .hybrid-diagnostics .diag-item {
+            margin-top: 6px;
+            padding-left: 4px;
+            color: #6b3a36;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .hybrid-diagnostics .diag-meta {
+            margin-top: 8px;
+            color: #8a8a99;
+            font-size: 12px;
+        }
+
         .citation-list {
             display: grid;
             gap: 8px;
@@ -633,6 +664,12 @@
             justify-content: space-between;
             gap: 12px;
         }
+        .research-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
         #researchQuery {
             margin-top: 4px;
             color: #606575;
@@ -647,6 +684,15 @@
         }
         #researchProgress { width: 100%; }
         #researchReport { line-height: 1.7; overflow-wrap: anywhere; }
+        .research-audit {
+            margin-top: 12px;
+            border-top: 1px solid #dfe2e8;
+            padding-top: 12px;
+            color: #606575;
+            font-size: 0.9rem;
+        }
+        .research-audit[hidden] { display: none; }
+        .research-audit-list { margin: 6px 0 0; padding-left: 18px; }
         .research-error {
             border-left: 3px solid #c53b36;
             border-radius: 4px;
@@ -657,6 +703,73 @@
         .research-error strong { display: block; margin-bottom: 6px; }
         .research-error p { margin: 0; white-space: pre-wrap; }
         #researchSources { display: grid; gap: 8px; margin-top: 12px; }
+        .research-export {
+            margin-top: 12px;
+            border-top: 1px solid #dfe2e8;
+            padding-top: 12px;
+        }
+        .research-export[hidden] { display: none; }
+        .research-export-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+        .research-export-actions button {
+            padding: 4px 10px;
+            border: 1px solid #cfd3dc;
+            border-radius: 4px;
+            background: #f6f7f9;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .research-export-actions button:hover:not(:disabled) { background: #eceef2; }
+        .research-export-actions button:disabled { opacity: 0.5; cursor: default; }
+        .research-export-list { margin-top: 8px; }
+        .export-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            padding: 4px 0;
+            font-size: 12px;
+            color: #44464d;
+        }
+        .export-item .export-state {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+        }
+        .export-item .export-state.created,
+        .export-item .export-state.running { background: #eef4ff; color: #1d4ed8; }
+        .export-item .export-state.completed { background: #e6f6ec; color: #15803d; }
+        .export-item .export-state.failed { background: #fdeaea; color: #b91c1c; }
+        .export-item .download-link { color: #1d4ed8; text-decoration: none; }
+        .export-item .download-link:hover { text-decoration: underline; }
+        .export-item .download-link.disabled {
+            color: #777b84;
+            opacity: 0.65;
+            pointer-events: none;
+            text-decoration: none;
+        }
+        .export-item .expired-tag {
+            color: #b45309;
+            border: 1px solid #f0c36d;
+            border-radius: 4px;
+            padding: 0 4px;
+            font-size: 11px;
+        }
+        .export-item .export-error { color: #b91c1c; }
+        .export-item button {
+            padding: 2px 8px;
+            border: 1px solid #cfd3dc;
+            border-radius: 4px;
+            background: #f6f7f9;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .export-item button:hover { background: #eceef2; }
         #researchHistoryWrap {
             display: flex;
             align-items: center;
@@ -687,7 +800,7 @@
         }
         .conversation-item {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
+            grid-template-columns: minmax(0, 1fr) auto auto;
             align-items: center;
             gap: 8px;
             width: 100%;
@@ -699,10 +812,57 @@
             text-align: left;
         }
         .conversation-item.active { background: #eef6f2; }
+        .conversation-open {
+            min-width: 0;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
         .conversation-title {
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+        .conversation-edit {
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            background: transparent;
+            color: #6b6b7b;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+        }
+        .conversation-edit:hover,
+        .conversation-edit:focus-visible {
+            border-color: #d8d4e8;
+            background: #f4f1fb;
+            color: #6a3de8;
+            outline: none;
+        }
+        .conversation-delete {
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            background: transparent;
+            color: #8a6b6b;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+        }
+        .conversation-delete:hover,
+        .conversation-delete:focus-visible {
+            border-color: #f0cccc;
+            background: #fff1f1;
+            color: #b42318;
+            outline: none;
         }
         .research-plan {
             border-top: 1px solid #dfe2e8;
@@ -843,7 +1003,11 @@
                     <strong>深度研究</strong>
                     <div id="researchQuery"></div>
                 </div>
-                <button type="button" id="cancelResearchBtn" hidden>取消</button>
+                <div class="research-actions">
+                    <button type="button" id="pauseResearchBtn" hidden>暂停</button>
+                    <button type="button" id="resumeResearchBtn" hidden>恢复</button>
+                    <button type="button" id="cancelResearchBtn" hidden>取消</button>
+                </div>
             </div>
             <div class="research-progress">
                 <progress id="researchProgress" max="100" value="0"></progress>
@@ -855,7 +1019,17 @@
                 <ol id="researchSubtasks"></ol>
             </section>
             <article id="researchReport"></article>
+            <section id="researchExport" class="research-export" hidden>
+                <div class="research-export-head"><strong>导出报告</strong></div>
+                <div class="research-export-actions">
+                    <button type="button" id="exportMdBtn">Markdown</button>
+                    <button type="button" id="exportDocxBtn">Word (docx)</button>
+                    <button type="button" id="exportPdfBtn">PDF</button>
+                </div>
+                <div id="exportList" class="research-export-list"></div>
+            </section>
             <div id="researchSources"></div>
+            <section id="researchAudit" class="research-audit" hidden></section>
         </section>
 
         <div class="status-text" id="statusText"></div>
@@ -924,6 +1098,9 @@ const researchProgress = document.getElementById("researchProgress");
 const researchStep = document.getElementById("researchStep");
 const researchReport = document.getElementById("researchReport");
 const researchSources = document.getElementById("researchSources");
+const researchAudit = document.getElementById("researchAudit");
+const pauseResearchBtn = document.getElementById("pauseResearchBtn");
+const resumeResearchBtn = document.getElementById("resumeResearchBtn");
 const cancelResearchBtn = document.getElementById("cancelResearchBtn");
 const conversationList = document.getElementById("conversationList");
 const newConversationBtn = document.getElementById("newConversationBtn");
@@ -933,6 +1110,20 @@ const researchSubtasks = document.getElementById("researchSubtasks");
 const researchHistoryWrap = document.getElementById("researchHistoryWrap");
 const researchHistorySelect = document.getElementById("researchHistorySelect");
 const deleteResearchHistoryBtn = document.getElementById("deleteResearchHistoryBtn");
+const researchExport = document.getElementById("researchExport");
+const exportList = document.getElementById("exportList");
+const exportMdBtn = document.getElementById("exportMdBtn");
+const exportDocxBtn = document.getElementById("exportDocxBtn");
+const exportPdfBtn = document.getElementById("exportPdfBtn");
+let exportPollTimer = null;
+const exportRequestsInFlight = new Set();
+const activeExportKinds = new Set();
+const artifactDownloadsInFlight = new Set();
+const EXPORT_KINDS = [
+    { kind: "markdown", label: "Markdown" },
+    { kind: "docx", label: "Word (docx)" },
+    { kind: "pdf", label: "PDF" },
+];
 
 let activeResearchTaskId = null;
 let researchPollTimer = null;
@@ -943,6 +1134,9 @@ let pendingResearchKey = null;
 let researchSubmitInFlight = false;
 let researchPollFailures = 0;
 const MAX_RESEARCH_POLL_FAILURES = 10;
+const researchActiveStatuses = new Set([
+    "created", "planning", "searching", "reading", "verifying", "writing", "paused"
+]);
 let activeChatMode = selectableChatModes.has(storedChatMode)
     ? storedChatMode
     : "normal";
@@ -994,6 +1188,8 @@ function clearChatMessages() {
 
 function clearResearchPanel() {
     stopResearchPolling();
+    hideExportSection();
+    researchLastSequence = 0;
     activeResearchTaskId = null;
     displayedResearchTaskId = null;
     researchPanel.hidden = true;
@@ -1002,9 +1198,13 @@ function clearResearchPanel() {
     researchStep.textContent = "等待开始";
     researchReport.textContent = "";
     researchSources.textContent = "";
+    researchAudit.textContent = "";
+    researchAudit.hidden = true;
     researchPlan.hidden = true;
     researchScope.textContent = "";
     researchSubtasks.textContent = "";
+    pauseResearchBtn.hidden = true;
+    resumeResearchBtn.hidden = true;
     cancelResearchBtn.hidden = true;
     localStorage.removeItem("activeResearchTaskId");
     localStorage.removeItem("lastResearchTaskId");
@@ -1070,7 +1270,7 @@ async function deleteResearchHistory() {
     const taskId = researchHistorySelect.value;
     if (!taskId) return;
     const option = researchHistorySelect.selectedOptions[0];
-    if (["pending", "running"].includes(option?.dataset.status)) {
+    if (researchActiveStatuses.has(option?.dataset.status)) {
         statusText.textContent = "运行中的研究任务不能删除，请先取消";
         statusText.className = "status-text error";
         return;
@@ -1127,6 +1327,80 @@ async function openConversation(conversationId) {
     await loadConversations();
 }
 
+async function renameConversation(conversationId, currentTitle) {
+    const entered = window.prompt("请输入新的会话名称", currentTitle || "新对话");
+    if (entered === null) return;
+
+    const title = entered.trim();
+    if (!title) {
+        statusText.textContent = "会话名称不能为空";
+        statusText.className = "status-text error";
+        return;
+    }
+    if (title.length > 100) {
+        statusText.textContent = "会话名称不能超过 100 个字符";
+        statusText.className = "status-text error";
+        return;
+    }
+
+    const response = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationId)}`,
+        {
+            method: "PATCH",
+            credentials: "include",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({title}),
+        },
+    );
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        statusText.textContent = data.detail || "会话名称修改失败";
+        statusText.className = "status-text error";
+        return;
+    }
+
+    await loadConversations();
+    statusText.textContent = "会话名称已修改";
+    statusText.className = "status-text";
+}
+
+async function deleteConversation(conversationId, title) {
+    if (!window.confirm(`确定删除会话“${title || "新对话"}”吗？聊天记录也会被删除。`)) {
+        return;
+    }
+
+    const response = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationId)}`,
+        {
+            method: "DELETE",
+            credentials: "include",
+        },
+    );
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        statusText.textContent = data.detail || "会话删除失败";
+        statusText.className = "status-text error";
+        return;
+    }
+
+    const wasActive = activeConversationId === conversationId;
+    if (wasActive) {
+        activeConversationId = "";
+        activeConversationItems = [];
+        localStorage.removeItem("activeConversationId");
+        clearChatMessages();
+        clearResearchPanel();
+    }
+
+    await loadConversations();
+    if (wasActive) {
+        await ensureConversation();
+        await openConversation(activeConversationId);
+    }
+    statusText.textContent = "会话已删除";
+    statusText.className = "status-text";
+}
+
 async function loadConversations() {
     const response = await fetch("/api/conversations", {
         credentials: "include"
@@ -1135,16 +1409,49 @@ async function loadConversations() {
     const items = await response.json();
     conversationList.textContent = "";
     for (const item of items) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "conversation-item";
-        if (item.id === activeConversationId) button.classList.add("active");
+        const row = document.createElement("div");
+        row.className = "conversation-item";
+        if (item.id === activeConversationId) row.classList.add("active");
+
+        const openButton = document.createElement("button");
+        openButton.type = "button";
+        openButton.className = "conversation-open";
         const title = document.createElement("span");
         title.className = "conversation-title";
         title.textContent = item.title;
-        button.appendChild(title);
-        button.addEventListener("click", () => openConversation(item.id));
-        conversationList.appendChild(button);
+        openButton.appendChild(title);
+        openButton.addEventListener("click", () => openConversation(item.id));
+
+        const editButton = document.createElement("button");
+        editButton.type = "button";
+        editButton.className = "conversation-edit";
+        editButton.title = "编辑会话名称";
+        editButton.setAttribute("aria-label", "编辑会话名称");
+        editButton.innerHTML = "&#9998;";
+        editButton.addEventListener("click", event => {
+            event.stopPropagation();
+            renameConversation(item.id, item.title).catch(error => {
+                statusText.textContent = error.message || "会话名称修改失败";
+                statusText.className = "status-text error";
+            });
+        });
+
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.className = "conversation-delete";
+        deleteButton.title = "删除会话";
+        deleteButton.setAttribute("aria-label", "删除会话");
+        deleteButton.innerHTML = "&#128465;";
+        deleteButton.addEventListener("click", event => {
+            event.stopPropagation();
+            deleteConversation(item.id, item.title).catch(error => {
+                statusText.textContent = error.message || "会话删除失败";
+                statusText.className = "status-text error";
+            });
+        });
+
+        row.append(openButton, editButton, deleteButton);
+        conversationList.appendChild(row);
     }
 }
 
@@ -1152,11 +1459,173 @@ newConversationBtn.addEventListener("click", async () => {
     await createConversation();
 });
 
+let researchEventSource = null;
+let researchLastSequence = 0;
+const researchSnapshotRefreshes = new Map();
+const researchSnapshotEvents = new Set([
+    "phase.changed",
+    "checkpoint.saved",
+    "task.recovered",
+    "task.retry_scheduled",
+]);
+
+function stopResearchPollTimer() {
+    if (researchPollTimer !== null) {
+        window.clearTimeout(researchPollTimer);
+        researchPollTimer = null;
+    }
+}
+
+function closeResearchEvents() {
+    if (researchEventSource) {
+        researchEventSource.close();
+        researchEventSource = null;
+    }
+}
+
+async function refreshResearchTaskSnapshot(taskId) {
+    if (!taskId || activeResearchTaskId !== taskId) return;
+    if (researchSnapshotRefreshes.has(taskId)) {
+        return researchSnapshotRefreshes.get(taskId);
+    }
+
+    const refresh = (async () => {
+        const response = await fetch(
+            `/api/research-tasks/${encodeURIComponent(taskId)}`,
+            {credentials: "include"}
+        );
+        if (response.status === 401) {
+            window.location.replace("/login");
+            return;
+        }
+        if (response.status === 404) {
+            if (activeResearchTaskId === taskId) clearResearchPanel();
+            return;
+        }
+        if (!response.ok) throw new Error("任务详情刷新失败");
+        const task = await response.json();
+        if (activeResearchTaskId === taskId) showResearchTask(task);
+    })();
+    researchSnapshotRefreshes.set(taskId, refresh);
+
+    try {
+        await refresh;
+    } finally {
+        if (researchSnapshotRefreshes.get(taskId) === refresh) {
+            researchSnapshotRefreshes.delete(taskId);
+        }
+    }
+}
+
+function openResearchEvents(taskId) {
+    closeResearchEvents();
+
+    if (!taskId) return;
+
+    const query = new URLSearchParams();
+
+    if (researchLastSequence > 0) {
+        query.set(
+            "after_sequence",
+            String(researchLastSequence),
+        );
+    }
+
+    const suffix = query.toString()
+        ? `?${query.toString()}`
+        : "";
+
+    researchEventSource = new EventSource(
+        `/api/research-tasks/${
+            encodeURIComponent(taskId)
+        }/events${suffix}`,
+        {
+            withCredentials: true,
+        },
+    );
+
+    researchEventSource.addEventListener(
+        "research",
+        async event => {
+            if (activeResearchTaskId !== taskId) {
+                closeResearchEvents();
+                return;
+            }
+
+            let item;
+
+            try {
+                item = JSON.parse(event.data);
+            } catch (_) {
+                return;
+            }
+
+            const sequence = Number(item.sequence || 0);
+
+            if (sequence <= researchLastSequence) {
+                return;
+            }
+
+            researchLastSequence = sequence;
+
+            const payload = item.payload || {};
+            const progress = Number(payload.progress);
+
+            if (Number.isFinite(progress)) {
+                researchProgress.value = progress;
+            }
+
+            researchStep.textContent =
+                payload.current_step
+                || item.status
+                || "研究处理中";
+
+            if (item.status === "failed") {
+                researchStep.textContent =
+                    payload.error_message
+                    || "研究执行失败";
+            }
+
+            if (
+                researchSnapshotEvents.has(item.event_type)
+                && !["completed", "failed", "cancelled", "paused"].includes(item.status)
+            ) {
+                try {
+                    await refreshResearchTaskSnapshot(taskId);
+                } catch (_) {
+                    researchStep.textContent = "状态更新暂时中断，正在重试";
+                }
+            }
+
+            if (
+                [
+                    "completed",
+                    "failed",
+                    "cancelled",
+                    "paused",
+                ].includes(item.status)
+            ) {
+                closeResearchEvents();
+                await pollResearchTask();
+            }
+        },
+    );
+
+    researchEventSource.onerror = () => {
+        closeResearchEvents();
+
+        if (activeResearchTaskId === taskId) {
+            pollResearchTask();
+        }
+    };
+}
+
 function stopResearchPolling() {
     if (researchPollTimer !== null) {
         window.clearTimeout(researchPollTimer);
         researchPollTimer = null;
     }
+    closeResearchEvents();
 }
 
 function safeResearchUrl(value) {
@@ -1206,13 +1675,288 @@ function renderResearchFailure(message) {
     researchReport.appendChild(box);
 }
 
+function renderResearchAudit(task) {
+    researchAudit.textContent = "";
+    const usage = task.usage || {};
+    const evidence = task.evidence_snapshots || [];
+    if (!Number(usage.call_count) && !evidence.length) {
+        researchAudit.hidden = true;
+        return;
+    }
+
+    const title = document.createElement("strong");
+    title.textContent = "执行与证据审计";
+    const summary = document.createElement("p");
+    summary.textContent = [
+        `调用 ${Number(usage.call_count || 0)} 次`,
+        `输入 ${Number(usage.input_tokens || 0)} token`,
+        `输出 ${Number(usage.output_tokens || 0)} token`,
+        `耗时 ${Number(usage.latency_ms || 0)} ms`,
+        usage.usage_estimated ? "部分用量为估算" : "未伪造用量",
+    ].join(" · ");
+    researchAudit.append(title, summary);
+
+    if (evidence.length) {
+        const evidenceTitle = document.createElement("strong");
+        evidenceTitle.textContent = `报告引用快照（${evidence.length}）`;
+        const list = document.createElement("ul");
+        list.className = "research-audit-list";
+        for (const item of evidence) {
+            const row = document.createElement("li");
+            const blocks = (item.used_by_block_ids || []).join(", ") || "无报告块";
+            row.textContent = `${item.source_id} · ${item.title} · 哈希 ${String(item.content_hash || "").slice(0, 12)} · 报告块 ${blocks}`;
+            list.appendChild(row);
+        }
+        researchAudit.append(evidenceTitle, list);
+    }
+    researchAudit.hidden = false;
+}
+
+function currentExportTaskId() {
+    return displayedResearchTaskId || activeResearchTaskId;
+}
+
+function exportButtonForKind(kind) {
+    return {
+        markdown: exportMdBtn,
+        docx: exportDocxBtn,
+        pdf: exportPdfBtn,
+    }[kind] || null;
+}
+
+function updateExportButtonStates() {
+    for (const item of EXPORT_KINDS) {
+        const button = exportButtonForKind(item.kind);
+        if (!button) continue;
+        button.disabled = exportRequestsInFlight.has(item.kind)
+            || activeExportKinds.has(item.kind);
+    }
+}
+
+async function startExport(kind) {
+    const taskId = currentExportTaskId();
+    if (
+        !taskId
+        || exportRequestsInFlight.has(kind)
+        || activeExportKinds.has(kind)
+    ) return;
+    exportRequestsInFlight.add(kind);
+    updateExportButtonStates();
+    try {
+        const response = await fetch(
+            `/api/research-tasks/${encodeURIComponent(taskId)}/exports`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind })
+        });
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.detail || "导出创建失败");
+        }
+        await refreshExports();
+    } finally {
+        exportRequestsInFlight.delete(kind);
+        updateExportButtonStates();
+    }
+}
+
+async function refreshExports() {
+    const taskId = currentExportTaskId();
+    if (!taskId) return;
+    let jobs = [];
+    let artifacts = [];
+    try {
+        const [jobsRes, artRes] = await Promise.all([
+            fetch(`/api/research-tasks/${encodeURIComponent(taskId)}/exports`, { credentials: "include" }),
+            fetch(`/api/research-tasks/${encodeURIComponent(taskId)}/artifacts`, { credentials: "include" })
+        ]);
+        if (jobsRes.ok) jobs = await jobsRes.json();
+        if (artRes.ok) artifacts = await artRes.json();
+    } catch (err) {
+        exportList.textContent = "导出信息加载失败";
+        return;
+    }
+    renderExportList(jobs, artifacts);
+    activeExportKinds.clear();
+    for (const job of jobs) {
+        if (job.status === "created" || job.status === "running") {
+            activeExportKinds.add(job.kind);
+        }
+    }
+    updateExportButtonStates();
+    const hasActive = activeExportKinds.size > 0;
+    if (hasActive) {
+        ensureExportPolling();
+    } else {
+        stopExportPolling();
+    }
+}
+
+function renderExportList(jobs, artifacts) {
+    const jobByKind = {};
+    for (const job of jobs) jobByKind[job.kind] = job;
+    const artByKind = {};
+    for (const art of artifacts) {
+        if (!artByKind[art.kind]) artByKind[art.kind] = art;
+    }
+    const taskId = currentExportTaskId();
+
+    exportList.textContent = "";
+    for (const item of EXPORT_KINDS) {
+        const job = jobByKind[item.kind];
+        const art = artByKind[item.kind];
+        const row = document.createElement("div");
+        row.className = "export-item";
+
+        const label = document.createElement("span");
+        label.textContent = item.label;
+        row.appendChild(label);
+
+        if (art) {
+            const state = document.createElement("span");
+            state.className = "export-state completed";
+            state.textContent = art.expired ? "已过期" : "已生成";
+            row.appendChild(state);
+
+            if (art.expired) {
+                const tag = document.createElement("span");
+                tag.className = "expired-tag";
+                tag.textContent = "内容可能过时";
+                row.appendChild(tag);
+            }
+
+            const link = document.createElement("a");
+            link.className = "download-link";
+            link.textContent = art.expired ? "已过期" : `下载 ${art.filename}`;
+            if (!art.expired) {
+                link.href = `/api/research-tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(art.id)}`;
+                link.addEventListener("click", event => {
+                    event.preventDefault();
+                    downloadArtifactOnce(taskId, art, link).catch(error => {
+                        statusText.textContent = error.message;
+                        statusText.className = "status-text error";
+                    });
+                });
+            } else {
+                link.setAttribute("aria-disabled", "true");
+                link.classList.add("disabled");
+            }
+            row.appendChild(link);
+
+            const del = document.createElement("button");
+            del.textContent = "删除";
+            del.addEventListener("click", async () => {
+                if (!window.confirm("确定删除这个导出文件吗？")) return;
+                await fetch(
+                    `/api/research-tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(art.id)}`, {
+                    method: "DELETE",
+                    credentials: "include"
+                });
+                await refreshExports();
+            });
+            row.appendChild(del);
+        } else if (job) {
+            const state = document.createElement("span");
+            state.className = "export-state " + job.status;
+            const statusText = job.status === "created" ? "排队中"
+                : job.status === "running" ? "生成中" : job.status;
+            state.textContent = statusText;
+            row.appendChild(state);
+            if (job.error_message) {
+                const err = document.createElement("span");
+                err.className = "export-error";
+                err.textContent = job.error_message;
+                row.appendChild(err);
+            }
+        } else {
+            const state = document.createElement("span");
+            state.className = "export-state";
+            state.textContent = "未导出";
+            row.appendChild(state);
+        }
+        exportList.appendChild(row);
+    }
+}
+
+async function downloadArtifactOnce(taskId, artifact, control) {
+    if (artifactDownloadsInFlight.has(artifact.id)) return;
+    artifactDownloadsInFlight.add(artifact.id);
+    control.classList.add("disabled");
+    control.setAttribute("aria-disabled", "true");
+    try {
+        const response = await fetch(
+            `/api/research-tasks/${encodeURIComponent(taskId)}`
+                + `/artifacts/${encodeURIComponent(artifact.id)}`,
+            {credentials: "include"}
+        );
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.detail || "下载导出文件失败");
+        }
+        const blobUrl = URL.createObjectURL(await response.blob());
+        const anchor = document.createElement("a");
+        anchor.href = blobUrl;
+        anchor.download = artifact.filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } finally {
+        artifactDownloadsInFlight.delete(artifact.id);
+        control.classList.remove("disabled");
+        control.setAttribute("aria-disabled", "false");
+    }
+}
+
+function ensureExportPolling() {
+    if (exportPollTimer !== null) return;
+    exportPollTimer = window.setInterval(() => {
+        refreshExports().catch(() => {});
+    }, 2000);
+}
+
+function stopExportPolling() {
+    if (exportPollTimer !== null) {
+        window.clearInterval(exportPollTimer);
+        exportPollTimer = null;
+    }
+}
+
+function hideExportSection() {
+    stopExportPolling();
+    researchExport.hidden = true;
+    exportList.textContent = "";
+}
+
+function resetResearchTaskContent() {
+    hideExportSection();
+    activeExportKinds.clear();
+    updateExportButtonStates();
+    researchProgress.value = 0;
+    researchStep.textContent = "等待处理";
+    researchReport.textContent = "";
+    researchSources.textContent = "";
+    researchAudit.textContent = "";
+    researchAudit.hidden = true;
+    researchPlan.hidden = true;
+    researchScope.textContent = "";
+    researchSubtasks.textContent = "";
+}
+
 function showResearchTask(task) {
-    displayedResearchTaskId = task.id || null;
+    const nextTaskId = task.id || null;
+    if (displayedResearchTaskId !== nextTaskId) {
+        resetResearchTaskContent();
+    }
+    displayedResearchTaskId = nextTaskId;
+    researchExport.hidden = true;
+    stopExportPolling();
     if (activeChatMode === "deep_research") {
         researchHistorySelect.value = task.id || "";
         const selected = researchHistorySelect.selectedOptions[0];
         deleteResearchHistoryBtn.disabled = !selected
-            || ["pending", "running"].includes(selected.dataset.status);
+            || researchActiveStatuses.has(selected.dataset.status);
     }
     researchSubtasks.textContent = "";
     if (task.plan) {
@@ -1233,11 +1977,16 @@ function showResearchTask(task) {
     researchQuery.textContent = task.query || "";
     researchProgress.value = Number(task.progress || 0);
     researchStep.textContent = task.current_step || task.status;
+    renderResearchAudit(task);
+    renderResearchSources(task.sources || []);
 
     if (task.status === "completed") {
         researchReport.innerHTML = renderMd(task.report?.markdown || "");
-        renderResearchSources(task.sources || []);
+        researchExport.hidden = false;
+        refreshExports();
         cancelResearchBtn.hidden = true;
+        pauseResearchBtn.hidden = true;
+        resumeResearchBtn.hidden = true;
         activeResearchTaskId = null;
         localStorage.removeItem("activeResearchTaskId");
         stopResearchPolling();
@@ -1248,6 +1997,8 @@ function showResearchTask(task) {
         renderResearchFailure(task.error_message);
         researchSources.textContent = "";
         cancelResearchBtn.hidden = true;
+        pauseResearchBtn.hidden = true;
+        resumeResearchBtn.hidden = true;
         activeResearchTaskId = null;
         localStorage.removeItem("activeResearchTaskId");
         stopResearchPolling();
@@ -1258,6 +2009,8 @@ function showResearchTask(task) {
         researchReport.textContent = "任务已取消";
         researchSources.textContent = "";
         cancelResearchBtn.hidden = true;
+        pauseResearchBtn.hidden = true;
+        resumeResearchBtn.hidden = true;
         activeResearchTaskId = null;
         localStorage.removeItem("activeResearchTaskId");
         stopResearchPolling();
@@ -1266,9 +2019,20 @@ function showResearchTask(task) {
 
     activeResearchTaskId = task.id;
     localStorage.setItem("activeResearchTaskId", task.id);
-    researchReport.textContent = "";
-    researchSources.textContent = "";
-    cancelResearchBtn.hidden = false;
+    researchReport.textContent = task.status === "paused"
+        ? "任务已暂停，可点击恢复继续研究。"
+        : "";
+    const isPaused = task.status === "paused";
+    const isTerminal = ["completed", "failed", "cancelled"].includes(task.status);
+
+    pauseResearchBtn.hidden = isPaused || isTerminal;
+    resumeResearchBtn.hidden = !isPaused;
+    cancelResearchBtn.hidden = isTerminal;
+    cancelResearchBtn.disabled = false;
+
+    if (task.status === "paused") {
+        stopResearchPolling();
+    }
 }
 
 async function startResearch(query) {
@@ -1298,27 +2062,39 @@ async function startResearch(query) {
             throw new Error(data.detail || "研究任务创建失败");
         }
         const task = await response.json();
+
         pendingResearchKey = null;
         researchPollFailures = 0;
+        researchLastSequence = 0;
+        activeResearchTaskId = task.id;
+
+        await loadResearchHistory();
+
         showResearchTask({
             ...task,
             query,
             progress: 0,
             current_step: "等待处理",
-            sources: []
+            sources: [],
         });
+
         await pollResearchTask();
+
+        if (activeResearchTaskId) {
+            stopResearchPollTimer();
+            openResearchEvents(activeResearchTaskId);
+        }
     } finally {
         researchSubmitInFlight = false;
         sendBtn.disabled = false;
     }
 }
 
-async function pollResearchTask() {
-    if (!activeResearchTaskId) return;
+async function pollResearchTask(taskId = activeResearchTaskId) {
+    if (!taskId || activeResearchTaskId !== taskId) return;
     try {
         const response = await fetch(
-            `/api/research-tasks/${activeResearchTaskId}`,
+            `/api/research-tasks/${taskId}`,
             {credentials: "include"}
         );
         if (response.status === 401) {
@@ -1326,21 +2102,30 @@ async function pollResearchTask() {
             return;
         }
         if (response.status === 404) {
-            activeResearchTaskId = null;
-            localStorage.removeItem("activeResearchTaskId");
-            localStorage.removeItem("lastResearchTaskId");
-            researchPanel.hidden = true;
-            stopResearchPolling();
+            if (activeResearchTaskId === taskId) {
+                activeResearchTaskId = null;
+                localStorage.removeItem("activeResearchTaskId");
+                localStorage.removeItem("lastResearchTaskId");
+                researchPanel.hidden = true;
+                stopResearchPolling();
+            }
             return;
         }
         if (!response.ok) throw new Error("任务查询失败");
+        // 请求返回可能已经跨过了会话切换或研究切换；旧结果不得回写当前页面。
+        if (activeResearchTaskId !== taskId) return;
         researchPollFailures = 0;
         const task = await response.json();
+        if (activeResearchTaskId !== taskId) return;
         showResearchTask(task);
-        if (activeResearchTaskId) {
-            researchPollTimer = window.setTimeout(pollResearchTask, 2000);
+        if (activeResearchTaskId === taskId) {
+            researchPollTimer = window.setTimeout(
+                () => pollResearchTask(taskId),
+                2000,
+            );
         }
     } catch (_) {
+        if (activeResearchTaskId !== taskId) return;
         researchPollFailures += 1;
         if (researchPollFailures > MAX_RESEARCH_POLL_FAILURES) {
             researchStep.textContent = "连接失败次数过多，请刷新页面重试";
@@ -1352,12 +2137,20 @@ async function pollResearchTask() {
             30000,
             3000 * (2 ** (researchPollFailures - 1))
         );
-        researchPollTimer = window.setTimeout(pollResearchTask, delay);
+        researchPollTimer = window.setTimeout(
+            () => pollResearchTask(taskId),
+            delay,
+        );
     }
 }
 
 cancelResearchBtn.addEventListener("click", async () => {
     if (!activeResearchTaskId) return;
+
+    if (!window.confirm("确定取消这个研究任务吗？取消后不能恢复。")) {
+        return;
+    }
+
     cancelResearchBtn.disabled = true;
     const response = await fetch(
         `/api/research-tasks/${activeResearchTaskId}/cancel`, {
@@ -1366,6 +2159,40 @@ cancelResearchBtn.addEventListener("click", async () => {
     });
     cancelResearchBtn.disabled = false;
     if (response.ok) await pollResearchTask();
+});
+
+exportMdBtn.addEventListener("click", () => {
+    startExport("markdown").catch(err => { exportList.textContent = err.message; });
+});
+exportDocxBtn.addEventListener("click", () => {
+    startExport("docx").catch(err => { exportList.textContent = err.message; });
+});
+exportPdfBtn.addEventListener("click", () => {
+    startExport("pdf").catch(err => { exportList.textContent = err.message; });
+});
+
+pauseResearchBtn.addEventListener("click", async () => {
+    if (!activeResearchTaskId) return;
+    pauseResearchBtn.disabled = true;
+    const response = await fetch(
+        `/api/research-tasks/${activeResearchTaskId}/pause`, {
+        method: "POST",
+        credentials: "include"
+    });
+    if (response.ok) await pollResearchTask();
+    pauseResearchBtn.disabled = false;
+});
+
+resumeResearchBtn.addEventListener("click", async () => {
+    if (!activeResearchTaskId) return;
+    resumeResearchBtn.disabled = true;
+    const response = await fetch(
+        `/api/research-tasks/${activeResearchTaskId}/resume`, {
+        method: "POST",
+        credentials: "include"
+    });
+    if (response.ok) await pollResearchTask();
+    resumeResearchBtn.disabled = false;
 });
 
 // ==================== 标签切换 ====================
@@ -1662,7 +2489,7 @@ chatModeSelect.addEventListener("change", async event => {
 researchHistorySelect.addEventListener("change", async event => {
     const selected = event.target.selectedOptions[0];
     deleteResearchHistoryBtn.disabled = !event.target.value
-        || ["pending", "running"].includes(selected?.dataset.status);
+        || researchActiveStatuses.has(selected?.dataset.status);
     await openResearchHistory(event.target.value);
 });
 
@@ -1819,6 +2646,38 @@ function connectWS() {
 
             if (["knowledge", "hybrid"].includes(data.mode)) {
                 appendCitationCards(answerEl, data.citations || []);
+            }
+
+            if (
+                data.diagnostics &&
+                Array.isArray(data.diagnostics.validation_issues) &&
+                data.diagnostics.validation_issues.length > 0
+            ) {
+                const diag = data.diagnostics;
+                const box = document.createElement("details");
+                box.className = "hybrid-diagnostics";
+
+                const summary = document.createElement("summary");
+                summary.textContent = "混合回答诊断";
+                box.appendChild(summary);
+
+                for (const issue of diag.validation_issues) {
+                    const item = document.createElement("div");
+                    item.className = "diag-item";
+                    const code = issue.code ? `[${issue.code}] ` : "";
+                    item.textContent = `- ${code}${issue.message || "未知校验问题"}`;
+                    box.appendChild(item);
+                }
+
+                if (typeof diag.repair_attempts === "number") {
+                    const meta = document.createElement("div");
+                    meta.className = "diag-meta";
+                    const max = diag.max_repair_attempts || diag.repair_attempts || 1;
+                    meta.textContent = `修复次数：${diag.repair_attempts}/${max}`;
+                    box.appendChild(meta);
+                }
+
+                answerEl.appendChild(box);
             }
 
             if (data.requested_mode === "auto" && data.route_reason) {

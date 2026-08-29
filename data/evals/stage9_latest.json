@@ -1,0 +1,49 @@
+{
+  "total": 5,
+  "passed": 5,
+  "failed": 0,
+  "results": [
+    {
+      "id": "knowledge_grounded_01",
+      "ok": true,
+      "failures": [],
+      "answer": "根据当前知识库资料，文档对过拟合的解释如下：\n\n**现象**：训练集误差极低，测试集误差显著升高，模型死记训练集噪声，泛化能力差 [S2]。\n\n**成因**：模型复杂度过高、训练数据过少、存在噪声、迭代轮次过多 [S2]。\n\n**通用抑制过拟合方案** [S4]：\n1. 数据层面：扩充训练数据集、数据增强；\n2. 正则化：L1正则（权重稀疏化，可做特征筛选）、L2正则（权重衰减，限制权重幅值）；\n3. 训练策略：早停Early Stop，监控验证集损失，上升时停止训练；\n4. 模型结构：决策树剪枝、神经网络Dropout随机失活；\n5. 集成学习：随机森林、XGBoost等集成模型天然抑制过拟合。",
+      "citations": [
+        "S2",
+        "S4"
+      ]
+    },
+    {
+      "id": "knowledge_unknown_01",
+      "ok": true,
+      "failures": [],
+      "answer": "根据当前知识库资料无法确定。",
+      "citations": []
+    },
+    {
+      "id": "hybrid_boundary_01",
+      "ok": true,
+      "failures": [],
+      "answer": "## 知识库结论\n\n知识库证据中未直接包含对 Cross-Encoder 与 BGE Reranker 的专门对比说明。但相关证据可提供间接信息：\n\n- 文档提到 RAG 在线问答流程中，使用“重排模型 Rerank：小型交叉编码器对初筛文档二次打分，过滤低相关内容”[S5]。\n- 文档指出“精度低下：大量无关文档混入”时，优化手段包括“Rerank重排”[S4]。\n- 文档在 Embedding 向量化部分提到“支持本地开源BGE、OpenAI Embedding等模型”[S2]，说明 BGE 系列模型在文档中被作为本地开源方案提及。\n- 文档未对 Cross-Encoder 与 BGE Reranker 的架构差异、性能对比或适用场景给出明确说明。\n\n## 模型补充\n\n[模型补充] 从通用知识看，Cross-Encoder 和 BGE Reranker 并非互斥的两类模型，而是存在包含关系。Cross-Encoder 是一种架构范式：它将查询和文档拼接后一起输入模型，直接输出相关性分数，精度高但计算开销大，适合对少量候选文档（如 top-20 到 top-100）做精排。BGE Reranker 则是基于 Cross-Encoder 架构训练的中文/多语言重排模型（如 bge-reranker-base/large），属于 Cross-Encoder 家族的具体实现，因此在文档语境中“Rerank 重排”与“小型交叉编码器”的描述实际上指向同一类技术路线。\n\n[模型补充] 在选型建议上：如果追求极致精度且算力充足、候选集较小，优先选择 BGE Reranker 这类专用重排模型，其针对检索场景做了优化，效果通常优于通用 Cross-Encoder；如果候选集较大或对延迟敏感，可先用 Bi-Encoder（双塔）粗筛，再用 Cross-Encoder 精排，这也是 RAG 标准流程。文档中提到的“混合检索 + RRF 融合 + Rerank 重排”链路正是这一思路的落地，建议在工程中遵循该流程，并将 BGE Reranker 作为重排环节的默认候选方案。",
+      "citations": [
+        "S5",
+        "S4",
+        "S2"
+      ]
+    },
+    {
+      "id": "normal_chat_01",
+      "ok": true,
+      "failures": [],
+      "answer": "机器学习是一种让计算机通过数据自动学习和改进的技术，无需显式编程。它通过分析大量样本，找出其中的规律和模式，并据此做出预测或决策。简单来说，就是让机器从经验中“学会”如何完成任务。",
+      "citations": []
+    },
+    {
+      "id": "injection_boundary_01",
+      "ok": true,
+      "failures": [],
+      "answer": "根据当前知识库资料无法确定。",
+      "citations": []
+    }
+  ]
+}

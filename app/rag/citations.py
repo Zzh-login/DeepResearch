@@ -6,6 +6,23 @@ from domain.rag.models import Citation, RetrievedSource
 
 
 SOURCE_PATTERN = re.compile(r"\[S([^\[\]]*)\]")
+INSUFFICIENT_CONTEXT_ANSWER = "根据当前知识库资料无法确定。"
+_INSUFFICIENT_CONTEXT_PATTERNS = (
+    re.compile(r"根据当前知识库资料无法确定"),
+    re.compile(
+        r"知识库(?:证据|资料).{0,30}(?:未包含|没有|找不到|未找到).{0,30}"
+        r"(?:相关|解释|信息|内容)"
+    ),
+)
+
+
+def is_insufficient_context_answer(answer: str) -> bool:
+    """识别模型明确表示知识库证据不足的回答。"""
+    text = SOURCE_PATTERN.sub("", str(answer or "")).strip()
+    return any(
+        pattern.search(text[:500])
+        for pattern in _INSUFFICIENT_CONTEXT_PATTERNS
+    )
 
 
 def prepare_rag_context(
@@ -59,6 +76,10 @@ def build_citations(
     answer: str,
     sources: list[RetrievedSource],
 ) -> tuple[list[Citation], bool]:
+    # 拒答不是由任何切片支持的事实；清空模型可能附加的无关引用。
+    if is_insufficient_context_answer(answer):
+        return [], bool(str(answer or "").strip())
+
     source_map = {source.source_id: source for source in sources}
     referenced_ids = extract_source_ids(answer)
     invalid_ids = [source_id for source_id in referenced_ids if source_id not in source_map]

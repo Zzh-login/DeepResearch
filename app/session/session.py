@@ -20,6 +20,7 @@
 
 import asyncio
 from typing import Optional, Dict, Any, List
+from uuid import UUID
 
 from domain.prompt.builder import PromptBuilder
 from domain.prompt.validator import Validator
@@ -78,6 +79,7 @@ class ChatSession:
         validator: Optional[Validator] = None,
         long_memory: Optional[JsonLongMemory] = None,
         vector_memory: Optional[VectorMemory] = None,
+        model_gateway=None,
     ):
         """
         依赖注入：所有组件可替换
@@ -95,7 +97,10 @@ class ChatSession:
         self._long_memory = long_memory or JsonLongMemory(source)
 
         # 向量记忆（语义检索）—— PostgreSQL + pgvector + BGE-M3
-        self._vector_memory = vector_memory or VectorMemory()
+        self._vector_memory = vector_memory or VectorMemory(
+            model_gateway=model_gateway,
+            owner_id=self._source,
+        )
 
         # 双轨记忆 · 温层：归档存储（需在 builder 之前就绪）
         self._archive = JsonArchiveMemory(source)
@@ -145,6 +150,7 @@ class ChatSession:
             tools=build_graph_tools(self._tool_registry),
             context_builder=self._context_builder,
             settings=settings,
+            model_gateway=model_gateway,
             agent_mode=self._agent_mode,
         )
 
@@ -221,6 +227,7 @@ class ChatSession:
         self,
         user_text: str,
         user_id: str = "default",
+        conversation_id: UUID | None = None,
         include_vector: bool = False,
     ):
         """
@@ -258,6 +265,7 @@ class ChatSession:
                     user_text=user_text,
                     history=self._history,
                     user_id=user_id,
+                    conversation_id=conversation_id,
                     include_vector=include_vector,
                     persona_override=self._get_effective_persona(),
                 ):
@@ -280,8 +288,18 @@ class ChatSession:
         # 锁外 fire-and-forget（同 chat，不阻塞）
         if evicted_turns:
             asyncio.create_task(self._reduce_and_archive(evicted_turns))
-        asyncio.create_task(self._extractor.extract(user_text, final_reply, source=self._source))
-
+        # 每轮成功聊天都提炼长期记忆。
+        # 不能把它放在 if evicted_turns 里面，
+        # 否则短对话永远不会写入长期记忆。
+        asyncio.create_task(
+            self._extractor.extract(
+                user_text,
+                final_reply,
+                source=self._source,
+                memory_scope="user",
+                source_type="normal_chat",
+            )
+        )
         yield {"type": "done", "text": final_reply, "error": ""}
 
     # ════════════════════════════════════════════════════════

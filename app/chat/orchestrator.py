@@ -14,6 +14,11 @@ from infrastructure.config.settings import Settings
 from infrastructure.database.postgres import PostgresDatabase
 from infrastructure.knowledge.pg_repository import PgKnowledgeRepository
 from interfaces.web.chat_schemas import ChatRequest
+from app.chat.memory_policy import build_memory_policy
+from domain.memory.context import MemoryContext
+from infrastructure.conversation.pg_repository import ( PgConversationRepository, )
+from app.chat.memory_service import UnifiedMemoryService
+from domain.model_gateway.contracts import ModelRequestContext
 
 
 logger = logging.getLogger(__name__)
@@ -43,11 +48,13 @@ class ManualChatOrchestrator:
         settings: Settings,
         hybrid_graph: HybridGraph | None = None,
         auto_router: AutoChatRouter | None = None,
+        audit_repository=None,
     ) -> None:
         self._database = database
         self._rag_graph = rag_graph
         self._hybrid_graph = hybrid_graph
         self._auto_router = auto_router
+        self._audit = audit_repository
         self._settings = settings
 
     @staticmethod
@@ -70,7 +77,11 @@ class ManualChatOrchestrator:
     ) -> AsyncIterator[dict[str, Any]]:
         session.set_agent_mode(request.agent_mode)
         route_payload = self._route_payload(decision)
-        async for event in session.chat_stream(request.text, user_id=user_id):
+        async for event in session.chat_stream(
+            request.text,
+            user_id=user_id,
+            conversation_id=request.conversation_id,
+        ):
             if event["type"] == "token":
                 yield {
                     "type": "chat.token",
@@ -138,12 +149,25 @@ class ManualChatOrchestrator:
             )
 
         repo = await self._get_owned_repo(user_id, kb_id)
+
         try:
+            memory_context, conversation_context = (
+                await self._build_memory_context(
+                    request=request,
+                    user_id=user_id,
+                    resolved_mode=ResolvedChatMode.KNOWLEDGE.value,
+                )
+            )
+
             answer = await self._rag_graph.answer(
                 repo=repo,
                 knowledge_base_id=kb_id,
                 query=request.text,
                 top_k=self._settings.rag_top_k,
+                conversation_context=conversation_context,
+                user_memory_context=memory_context.user_memory_context,
+                owner_id=user_id,
+                conversation_id=request.conversation_id,
             )
         except RagModelError as exc:
             raise ChatProtocolError(
@@ -156,11 +180,13 @@ class ManualChatOrchestrator:
                 "知识库服务暂不可用，请稍后重试",
             ) from exc
 
-        yield self._answer_event(
+        yield await self._answer_event(
             answer=answer,
             resolved_mode=ResolvedChatMode.KNOWLEDGE,
             requested_mode=requested_mode,
             decision=decision,
+            owner_id=user_id,
+            conversation_id=request.conversation_id,
         )
 
     async def _run_hybrid(
@@ -183,12 +209,25 @@ class ManualChatOrchestrator:
             )
 
         repo = await self._get_owned_repo(user_id, kb_id)
+
         try:
+            memory_context, conversation_context = (
+                await self._build_memory_context(
+                    request=request,
+                    user_id=user_id,
+                    resolved_mode=ResolvedChatMode.HYBRID.value,
+                )
+            )
+
             answer = await self._hybrid_graph.answer(
                 repo=repo,
                 knowledge_base_id=kb_id,
                 query=request.text,
                 top_k=self._settings.rag_top_k,
+                conversation_context=conversation_context,
+                user_memory_context=memory_context.user_memory_context,
+                owner_id=user_id,
+                conversation_id=request.conversation_id,
             )
         except RagModelError as exc:
             raise ChatProtocolError(
@@ -201,26 +240,109 @@ class ManualChatOrchestrator:
                 "知识库服务暂不可用，请稍后重试",
             ) from exc
 
-        yield self._answer_event(
+        yield await self._answer_event(
             answer=answer,
             resolved_mode=ResolvedChatMode.HYBRID,
             requested_mode=requested_mode,
             decision=decision,
+            owner_id=user_id,
+            conversation_id=request.conversation_id,
         )
 
-    def _answer_event(
+    async def _build_memory_context(
+        self,
+        request,
+        user_id: str,
+        resolved_mode: str,
+    ) -> tuple[MemoryContext, list[dict]]:
+        conversation_repo = PgConversationRepository(
+            self._database,
+            user_id,
+        )
+
+        messages = await conversation_repo.list_context_messages(
+            request.conversation_id,
+            limit=10,
+        )
+
+        policy = build_memory_policy(resolved_mode)
+
+        user_memory_context = UnifiedMemoryService(
+            user_id
+        ).render_for_mode(resolved_mode)
+
+        context = MemoryContext(
+            user_id=user_id,
+            conversation_id=request.conversation_id,
+            mode=resolved_mode,
+            knowledge_base_id=request.knowledge_base_id,
+            include_user_memory=bool(user_memory_context),
+            include_conversation=policy["conversation"],
+            user_memory_context=user_memory_context,
+        )
+
+        return context, messages
+    async def _answer_event(
         self,
         answer,
         resolved_mode: ResolvedChatMode,
         requested_mode: ChatMode,
         decision: RouteDecision | None,
+        owner_id: str,
+        conversation_id,
     ) -> dict[str, Any]:
+        show_diag = self._settings.show_hybrid_diagnostics
+        raw_issues = getattr(answer, "validation_issues", []) or []
+        repair_attempts = getattr(answer, "repair_attempts", 0)
+        max_repair_attempts = getattr(answer, "max_repair_attempts", 1)
+        status_str = answer.status.value
+
+        text = answer.answer
+        if (
+            not show_diag
+            and status_str == "citation_rejected"
+            and resolved_mode == ResolvedChatMode.HYBRID
+        ):
+            text = "混合回答暂时无法生成，请稍后重试"
+
+        diagnostics = {
+            "validation_issues": raw_issues if show_diag else [],
+            "citation_valid": answer.citation_valid,
+            "status": status_str,
+            "repair_attempts": repair_attempts,
+            "max_repair_attempts": max_repair_attempts,
+        }
+
+        if self._audit is not None:
+            try:
+                await self._audit.write(
+                    ModelRequestContext(
+                        owner_id=owner_id,
+                        mode=resolved_mode.value,
+                        operation="chat_answer",
+                        conversation_id=conversation_id,
+                    ),
+                    "chat.answer",
+                    status_str,
+                    {
+                        "requested_mode": requested_mode.value,
+                        "resolved_mode": resolved_mode.value,
+                        "retrieved_count": answer.retrieved_count,
+                        "citation_valid": answer.citation_valid,
+                        "repair_attempts": repair_attempts,
+                        "issue_count": len(raw_issues),
+                    },
+                    severity="warning" if status_str == "citation_rejected" else "info",
+                )
+            except Exception:
+                logger.exception("Chat audit write failed for user=%s", owner_id)
+
         return {
             "type": "chat.done",
             "mode": resolved_mode.value,
             "requested_mode": requested_mode.value,
-            "text": answer.answer,
-            "status": answer.status.value,
+            "text": text,
+            "status": status_str,
             "citations": [
                 {
                     "source_id": item.source_id,
@@ -237,6 +359,7 @@ class ManualChatOrchestrator:
             ],
             "retrieved_count": answer.retrieved_count,
             "citation_valid": answer.citation_valid,
+            "diagnostics": diagnostics,
             **self._route_payload(decision),
         }
 
@@ -270,7 +393,9 @@ class ManualChatOrchestrator:
                     "自动回答方式暂不可用，请稍后重试",
                 )
             try:
-                decision = await self._auto_router.route(request.text)
+                decision = await self._auto_router.route(
+                    request.text, owner_id=user_id
+                )
             except AutoRouterError as exc:
                 logger.exception("Auto router failed for user=%s", user_id)
                 raise ChatProtocolError(

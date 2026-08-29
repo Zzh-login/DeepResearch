@@ -1,5 +1,6 @@
 import unittest
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage
@@ -44,17 +45,21 @@ def make_row():
 class HybridGraphTests(unittest.IsolatedAsyncioTestCase):
     async def _answer(self, rows, answers):
         model = SequenceModel(answers)
-        graph = HybridGraph(get_settings(), model=model)
-        with patch(
-            "app.rag.retrieval_service.embed_query",
-            new=AsyncMock(return_value=[0.0] * 1024),
-        ):
-            result = await graph.answer(
-                repo=FakeRepo(rows),
-                knowledge_base_id=uuid4(),
-                query="训练集有什么作用，并给出实践建议",
-                top_k=5,
-            )
+        gateway = AsyncMock()
+        gateway.embed = AsyncMock(
+            return_value=SimpleNamespace(vectors=[[0.0] * 1024])
+        )
+        graph = HybridGraph(
+            get_settings(),
+            model=model,
+            model_gateway=gateway,
+        )
+        result = await graph.answer(
+            repo=FakeRepo(rows),
+            knowledge_base_id=uuid4(),
+            query="训练集有什么作用，并给出实践建议",
+            top_k=5,
+        )
         return result, model
 
     async def test_blended_answer_with_valid_citation(self):
@@ -121,6 +126,61 @@ class HybridGraphTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(result.citation_valid)
         self.assertEqual(model.calls, 2)
+
+    async def test_rejection_exposes_structured_diagnostics(self):
+        result, model = await self._answer(
+            [make_row()],
+            ["错误回答", "仍然错误"],
+        )
+        self.assertEqual(
+            result.status,
+            HybridAnswerStatus.CITATION_REJECTED,
+        )
+        self.assertIsInstance(result.validation_issues, list)
+        self.assertGreater(len(result.validation_issues), 0)
+        codes = {item.get("code") for item in result.validation_issues}
+        self.assertIn("missing_sections", codes)
+        self.assertIn("empty_model_supplement", codes)
+        self.assertIn("问题：", result.answer)
+        self.assertEqual(result.repair_attempts, 1)
+        self.assertEqual(result.max_repair_attempts, 1)
+
+    async def test_valid_answer_has_no_issues(self):
+        answer = (
+            "## 知识库结论\n"
+            "训练集用于拟合模型参数。[S1]\n\n"
+            "## 模型补充\n"
+            "[模型补充] 应注意训练数据代表性。"
+        )
+        result, model = await self._answer([make_row()], [answer])
+        self.assertEqual(result.status, HybridAnswerStatus.BLENDED)
+        self.assertEqual(result.validation_issues, [])
+
+    async def test_model_supplement_accepts_bulleted_lines(self):
+        answer = (
+            "## 知识库结论\n"
+            "训练集用于拟合模型参数。[S1]\n\n"
+            "## 模型补充\n"
+            "- [模型补充] Cross-Encoder 通常更重视排序精度。\n"
+            "- [模型补充] BGE Reranker 可以在延迟和效果之间进行权衡。"
+        )
+        result, model = await self._answer([make_row()], [answer])
+        self.assertTrue(result.citation_valid)
+        self.assertEqual(result.status, HybridAnswerStatus.BLENDED)
+        self.assertEqual(model.calls, 1)
+
+    async def test_model_supplement_accepts_numbered_lines(self):
+        answer = (
+            "## 知识库结论\n"
+            "训练集用于拟合模型参数。[S1]\n\n"
+            "## 模型补充\n"
+            "1. [模型补充] Cross-Encoder 通常更重视排序精度。\n"
+            "2) [模型补充] BGE Reranker 可以在延迟和效果之间进行权衡。"
+        )
+        result, model = await self._answer([make_row()], [answer])
+        self.assertTrue(result.citation_valid)
+        self.assertEqual(result.status, HybridAnswerStatus.BLENDED)
+        self.assertEqual(model.calls, 1)
 
 
 if __name__ == "__main__":

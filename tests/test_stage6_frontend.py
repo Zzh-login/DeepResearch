@@ -78,6 +78,13 @@ class Stage6FrontendTests(unittest.TestCase):
         self.assertIn("stopResearchPolling();", self.html)
         self.assertIn('task.status === "completed"', self.html)
 
+    def test_research_poll_ignores_stale_response_after_switch(self):
+        poll_block = self.html.split("async function pollResearchTask", 1)[1]
+        poll_block = poll_block.split('\ncancelResearchBtn.addEventListener', 1)[0]
+        self.assertIn("taskId = activeResearchTaskId", poll_block)
+        self.assertIn("activeResearchTaskId !== taskId", poll_block)
+        self.assertIn("() => pollResearchTask(taskId)", poll_block)
+
     def test_failed_task_reason_is_rendered_in_report_area(self):
         self.assertIn("function renderResearchFailure(message)", self.html)
         self.assertIn('title.textContent = "执行失败"', self.html)

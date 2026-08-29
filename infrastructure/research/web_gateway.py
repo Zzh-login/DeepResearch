@@ -30,11 +30,14 @@ async def _validate_public_url(url: str) -> None:
         raise UnsafeUrlError("只允许公开 HTTP/HTTPS URL")
     if parsed.username or parsed.password:
         raise UnsafeUrlError("URL 不允许包含凭据")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if port not in {80, 443}:
+        raise UnsafeUrlError("只允许访问 80/443 端口")
 
     loop = asyncio.get_running_loop()
     infos = await loop.getaddrinfo(
         parsed.hostname,
-        parsed.port or (443 if parsed.scheme == "https" else 80),
+        port,
         type=socket.SOCK_STREAM,
     )
     for info in infos:

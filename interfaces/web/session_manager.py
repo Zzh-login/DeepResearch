@@ -24,17 +24,24 @@ class SessionManager:
     落盘文件天然按用户文件夹隔离。后台 sweep 任务定期驱逐
     超过 TTL 未活跃的会话以释放内存。
     """
-    def __init__(self, ttl_seconds: int = 3600, sweep_interval: int = 300):
+    def __init__(
+        self,
+        ttl_seconds: int = 3600,
+        sweep_interval: int = 300,
+        model_gateway=None,
+    ):
         """初始化按 user_id 隔离的会话管理器。
 
         参数:
             ttl_seconds - 会话空闲存活时长（秒），超过则被后台 sweep 驱逐。
             sweep_interval - 后台清理任务的执行间隔（秒）。
+            model_gateway - 共享的模型网关（统一注入给每个 ChatSession）。
         """
         self._sessions: Dict[str, ChatSession] = {}
         self._last_active: Dict[str, float] = {}
         self._ttl = ttl_seconds
         self._sweep_interval = sweep_interval
+        self._model_gateway = model_gateway
         self._task: Optional[asyncio.Task] = None
 
     def get_or_create(self, user_id: str) -> ChatSession:
@@ -43,7 +50,10 @@ class SessionManager:
         session = self._sessions.get(user_id)
         if session is None:
             # 用 user_{id} 作为 source，磁盘文件按用户隔离
-            session = ChatSession(source=f"user_{user_id}")
+            session = ChatSession(
+                source=f"user_{user_id}",
+                model_gateway=self._model_gateway,
+            )
             self._sessions[user_id] = session
         self._last_active[user_id] = now
         return session

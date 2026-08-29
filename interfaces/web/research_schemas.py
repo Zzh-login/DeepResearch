@@ -1,5 +1,11 @@
+from typing import Literal
 from uuid import UUID
+
 from pydantic import BaseModel, Field, field_validator
+
+
+class ExportRequest(BaseModel):
+    kind: Literal["markdown", "docx", "pdf"]
 
 
 class ResearchTaskCreate(BaseModel):

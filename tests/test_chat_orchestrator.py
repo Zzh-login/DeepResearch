@@ -1,12 +1,14 @@
+import inspect
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from app.chat.orchestrator import ChatProtocolError, ManualChatOrchestrator
 from domain.rag.models import Citation, RagAnswer, RagAnswerStatus
 from infrastructure.config.settings import get_settings
 from interfaces.web.chat_schemas import ChatRequest
+from domain.memory.context import MemoryContext
 
 
 class FakeSession:
@@ -17,7 +19,7 @@ class FakeSession:
     def set_agent_mode(self, value):
         self.agent_mode = value
 
-    async def chat_stream(self, text, user_id):
+    async def chat_stream(self, text, user_id, conversation_id=None):
         self.called = True
         yield {"type": "token", "text": "普通"}
         yield {"type": "done", "text": "普通回答", "error": ""}
@@ -27,7 +29,17 @@ class FakeRagGraph:
     def __init__(self):
         self.called = False
 
-    async def answer(self, repo, knowledge_base_id, query, top_k):
+    async def answer(
+        self,
+        repo,
+        knowledge_base_id,
+        query,
+        top_k,
+        conversation_context=None,
+        user_memory_context=None,
+        owner_id="system",
+        conversation_id=None,
+    ):
         self.called = True
         return RagAnswer(
             query=query,
@@ -63,7 +75,16 @@ class FakeRefusedRepository(FakeOwnedRepository):
 
 
 def _answer_with_citation(chunk_id, document_id):
-    async def answer(repo, knowledge_base_id, query, top_k):
+    async def answer(
+        repo,
+        knowledge_base_id,
+        query,
+        top_k,
+        conversation_context=None,
+        user_memory_context=None,
+        owner_id="system",
+        conversation_id=None,
+        ):
         return RagAnswer(
             query=query,
             answer="知识库回答 [S1]",
@@ -181,14 +202,30 @@ class ManualChatOrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 mode="knowledge",
                 knowledge_base_id=kb_id, conversation_id=uuid4(),
             )
-            events = [
-                item
-                async for item in orchestrator.run(
-                    request,
-                    session,
-                    "user-a",
+            with patch.object(
+                orchestrator,
+                "_build_memory_context",
+                new=AsyncMock(
+                    return_value=(
+                        MemoryContext(
+                            user_id="user-a",
+                            conversation_id=request.conversation_id,
+                            mode=request.mode.value,
+                            knowledge_base_id=request.knowledge_base_id,
+                            user_memory_context="",
+                        ),
+                        [],
+                    )
                 )
-            ]
+            ):
+                events = [
+                    item
+                    async for item in orchestrator.run(
+                        request,
+                        session,
+                        "user-a",
+                    )
+                ]
 
         self.assertFalse(session.called)
         self.assertEqual(len(events), 1)
@@ -265,6 +302,11 @@ class ManualChatOrchestratorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.code, "database_unavailable")
         self.assertFalse(session.called)
+
+    def test_answer_event_is_async_and_audit_aware(self):
+        source = inspect.getsource(ManualChatOrchestrator._answer_event)
+        self.assertIn("await self._audit.write", source)
+        self.assertIn("ModelRequestContext", source)
 
 
 if __name__ == "__main__":

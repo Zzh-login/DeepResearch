@@ -4,7 +4,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.research.worker import ResearchWorker, user_failure_message
+from app.research.worker import (
+    ResearchWorker,
+    is_retryable_error,
+    user_failure_message,
+)
 
 
 class _FakeRepository:
@@ -20,7 +24,9 @@ class _FakeRepository:
     async def claim_next_task(self, max_attempts):
         return None
 
-
+    async def finalize_stale_cancel_requests(self):
+        return 0
+    
 class ResearchWorkerTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         _FakeRepository.recovered = 0
@@ -78,7 +84,23 @@ class ResearchWorkerTests(unittest.IsolatedAsyncioTestCase):
     def test_timeout_has_specific_message(self):
         self.assertIn("超时", user_failure_message(asyncio.TimeoutError()))
 
+    def test_retry_policy_only_retries_transient_errors(self):
+        self.assertTrue(is_retryable_error(asyncio.TimeoutError()))
+        self.assertTrue(is_retryable_error(ConnectionError("offline")))
+        self.assertFalse(is_retryable_error(ValueError("bad report")))
+        self.assertFalse(is_retryable_error(RuntimeError("logic bug")))
+
     def test_loop_survives_database_error(self):
         source = inspect.getsource(ResearchWorker._run_loop)
         self.assertIn("Research worker loop failed", source)
         self.assertIn("asyncio.CancelledError", source)
+
+    def test_worker_uses_transactional_completion_result(self):
+        source = inspect.getsource(ResearchWorker._run_loop)
+        self.assertIn("outcome = await repo.complete_task", source)
+        self.assertIn('outcome == "paused"', source)
+        self.assertIn('outcome == "cancelled"', source)
+
+    def test_worker_can_inject_audit_repository(self):
+        source = inspect.getsource(ResearchWorker._repository)
+        self.assertIn("audit_repository=self._audit_repository", source)

@@ -1,10 +1,15 @@
 import unittest
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage
 
-from app.rag.citations import build_citations, prepare_rag_context
+from app.rag.citations import (
+    INSUFFICIENT_CONTEXT_ANSWER,
+    build_citations,
+    prepare_rag_context,
+)
 from app.rag.graph import RagGraph
 from domain.rag.models import RagAnswerStatus, RetrievedSource
 from infrastructure.config.settings import get_settings
@@ -99,10 +104,30 @@ class CitationTests(unittest.TestCase):
         self.assertFalse(valid)
         self.assertEqual(len(citations), 1)
 
+    def test_insufficient_context_clears_model_added_citations(self):
+        citations, valid = build_citations(
+            "根据当前知识库资料无法确定。知识库证据中未包含量子纠缠的解释内容[S1][S2]。",
+            [self.source],
+        )
+        self.assertTrue(valid)
+        self.assertEqual(citations, [])
+
 
 class RagGraphTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _fake_gateway():
+        gateway = AsyncMock()
+        gateway.embed = AsyncMock(
+            return_value=SimpleNamespace(vectors=[[1.0] + [0.0] * 1023])
+        )
+        return gateway
+
     async def _answer(self, rows: list[dict], model: SequenceModel):
-        graph = RagGraph(get_settings(), model=model)
+        graph = RagGraph(
+            get_settings(),
+            model=model,
+            model_gateway=self._fake_gateway(),
+        )
         return await graph.answer(
             repo=FakeRepo(rows),
             knowledge_base_id=uuid4(),
@@ -110,9 +135,7 @@ class RagGraphTests(unittest.IsolatedAsyncioTestCase):
             top_k=5,
         )
 
-    @patch("app.rag.retrieval_service.embed_query", new_callable=AsyncMock)
-    async def test_grounded_answer(self, mock_embed_query):
-        mock_embed_query.return_value = [1.0] + [0.0] * 1023
+    async def test_grounded_answer(self):
         model = SequenceModel(["监督学习使用带标签的数据。[S1]"])
         result = await self._answer([make_row()], model)
         self.assertEqual(result.status, RagAnswerStatus.GROUNDED)
@@ -120,25 +143,39 @@ class RagGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.citations), 1)
         self.assertEqual(model.calls, 1)
 
-    @patch("app.rag.retrieval_service.embed_query", new_callable=AsyncMock)
-    async def test_no_context_does_not_call_model(self, mock_embed_query):
-        mock_embed_query.return_value = [1.0] + [0.0] * 1023
+    async def test_knowledge_retrieval_uses_explicit_gateway_context(self):
+        gateway = self._fake_gateway()
+        graph = RagGraph(
+            get_settings(),
+            model=SequenceModel([]),
+            model_gateway=gateway,
+        )
+        await graph._retrieve(
+            {
+                "repo": FakeRepo([]),
+                "knowledge_base_id": uuid4(),
+                "query": "问题",
+                "top_k": 5,
+                "owner_id": "owner-a",
+            }
+        )
+        context = gateway.embed.await_args.kwargs["context"]
+        self.assertEqual(context.mode, "knowledge")
+        self.assertEqual(context.operation, "knowledge_query_embedding")
+
+    async def test_no_context_does_not_call_model(self):
         model = SequenceModel([])
         result = await self._answer([], model)
         self.assertEqual(result.status, RagAnswerStatus.INSUFFICIENT_CONTEXT)
         self.assertEqual(model.calls, 0)
 
-    @patch("app.rag.retrieval_service.embed_query", new_callable=AsyncMock)
-    async def test_low_score_does_not_call_model(self, mock_embed_query):
-        mock_embed_query.return_value = [1.0] + [0.0] * 1023
+    async def test_low_score_does_not_call_model(self):
         model = SequenceModel([])
         result = await self._answer([make_row(score=0.36)], model)
         self.assertEqual(result.status, RagAnswerStatus.INSUFFICIENT_CONTEXT)
         self.assertEqual(model.calls, 0)
 
-    @patch("app.rag.retrieval_service.embed_query", new_callable=AsyncMock)
-    async def test_invalid_citation_is_repaired_once(self, mock_embed_query):
-        mock_embed_query.return_value = [1.0] + [0.0] * 1023
+    async def test_invalid_citation_is_repaired_once(self):
         model = SequenceModel([
             "错误编号。[S99]",
             "监督学习使用带标签的数据。[S1]",
@@ -148,15 +185,23 @@ class RagGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.citation_valid)
         self.assertEqual(model.calls, 2)
 
-    @patch("app.rag.retrieval_service.embed_query", new_callable=AsyncMock)
-    async def test_second_invalid_citation_is_rejected(self, mock_embed_query):
-        mock_embed_query.return_value = [1.0] + [0.0] * 1023
+    async def test_second_invalid_citation_is_rejected(self):
         model = SequenceModel(["错误。[S99]", "仍然错误。[S88]"])
         result = await self._answer([make_row()], model)
         self.assertEqual(result.status, RagAnswerStatus.CITATION_REJECTED)
         self.assertFalse(result.citation_valid)
         self.assertEqual(result.citations, [])
         self.assertEqual(model.calls, 2)
+
+    async def test_insufficient_context_is_normalized_without_citations(self):
+        model = SequenceModel([
+            "根据当前知识库资料无法确定。知识库证据中未包含量子纠缠的解释内容[S1]。",
+        ])
+        result = await self._answer([make_row()], model)
+        self.assertEqual(result.status, RagAnswerStatus.INSUFFICIENT_CONTEXT)
+        self.assertEqual(result.answer, INSUFFICIENT_CONTEXT_ANSWER)
+        self.assertTrue(result.citation_valid)
+        self.assertEqual(result.citations, [])
 
 
 if __name__ == "__main__":

@@ -22,6 +22,8 @@
   - 落盘即按 (importance, confidence, updated_at) 降序排，重要的在前。
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import re
@@ -191,50 +193,87 @@ class JsonLongMemory:
         )
         self.save(data)
 
-    def render_context(self, max_items: int = 20) -> str:
+    def render_context( self, max_items: int = 20, allowed_types: set[str] | frozenset[str] | None = None, ) -> str:
         """把结构化记忆渲染成可注入 system prompt 的纯文本。
 
         Returns:
             形如 "- [preference] 用户偏好中文回答" 的多行文本（取前 max_items 条）；
             若无任何记忆返回空串 ""（供 PromptBuilder 判断"有则注入"）。
             兼容旧版非结构化字段（K/V 平铺）的渲染。
+
+        渲染长期记忆。
+        allowed_types 为 None 时返回全部记忆；
+        指定类型时只返回允许类型
         """
         data = self.load()
         if not data:
             return ""
 
-        structured = self._load_structured_items(data)
+        structured = self._load_structured_items(
+            data,
+            allowed_types=allowed_types,
+        )
+
         if structured:
             lines = []
+
             for item in structured[:max_items]:
                 fact = item.get("fact", "").strip()
                 if fact:
-                    lines.append(f"- [{item.get('type', 'memory')}] {fact}")
-            legacy_context = self._render_legacy_context(
-                {k: v for k, v in data.items() if k != "memories"}
-            )
-            if legacy_context:
-                lines.append(legacy_context)
+                    lines.append(
+                        f"- [{item.get('type', 'memory')}] {fact}"
+                    )
+
+            # 旧版平铺数据只允许普通模式读取。
+            if allowed_types is None:
+                legacy_context = self._render_legacy_context(
+                    {
+                        k: v
+                        for k, v in data.items()
+                        if k != "memories"
+                    }
+                )
+                if legacy_context:
+                    lines.append(legacy_context)
+
             return "\n".join(lines)
 
+        # 有模式限制时，不读取旧版无法分类的记忆。
+        if allowed_types is not None:
+            return ""
+
         return self._render_legacy_context(data)
-
-    def _load_structured_items(self, data: dict) -> list[dict]:
-        """从 data["memories"] 加载并规整所有结构化记忆项，按重要度降序返回。
-
-        与 add_memories 共用 _normalize_memory；preserve_dates=True 以保留
-        已有的 created_at / updated_at 时间戳（读取路径不应改动时间）。
-        """
+    def _load_structured_items(
+        self,
+        data: dict,
+        allowed_types: set[str] | frozenset[str] | None = None,
+    ) -> list[dict]:
+        """读取结构化记忆，并按类型过滤。"""
         memories = data.get("memories", [])
+
         if not isinstance(memories, list):
             return []
 
         now = datetime.now(timezone.utc).isoformat()
         items = []
+
         for raw in memories:
-            item = self._normalize_memory(raw, now, preserve_dates=True)
-            if item is not None:
-                items.append(item)
+            item = self._normalize_memory(
+                raw,
+                now,
+                preserve_dates=True,
+            )
+
+            if item is None:
+                continue
+
+            if (
+                allowed_types is not None
+                and item["type"] not in allowed_types
+            ):
+                continue
+
+            items.append(item)
 
         return sorted(
             items,

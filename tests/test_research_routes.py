@@ -26,6 +26,17 @@ class ResearchRouteTests(unittest.TestCase):
         )
         self.assertEqual(route.status_code, 204)
 
+    def test_task_detail_exposes_audit_sections(self):
+        import inspect
+
+        source = inspect.getsource(__import__(
+            "interfaces.web.research_routes",
+            fromlist=["get_research_task"],
+        ).get_research_task)
+        self.assertIn('result["usage"]', source)
+        self.assertIn('result["usage_records"]', source)
+        self.assertIn('result["evidence_snapshots"]', source)
+
     def test_delete_removes_linked_research_messages(self):
         import inspect
 

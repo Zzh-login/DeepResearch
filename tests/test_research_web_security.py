@@ -39,6 +39,12 @@ class ResearchWebSecurityTests(unittest.IsolatedAsyncioTestCase):
         ):
             await _validate_public_url("https://example.com/article")
 
+    async def test_rejects_nonstandard_ports(self):
+        for url in ("https://example.com:22/a", "http://example.com:8080/a"):
+            with self.subTest(url=url):
+                with self.assertRaises(UnsafeUrlError):
+                    await _validate_public_url(url)
+
     def test_fetch_streams_and_limits_redirects(self):
         source = inspect.getsource(ResearchWebGateway._download)
         self.assertIn('client.stream("GET", current_url)', source)

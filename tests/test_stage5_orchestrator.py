@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from app.chat.orchestrator import ManualChatOrchestrator
@@ -13,6 +13,7 @@ from domain.rag.hybrid_models import HybridAnswer, HybridAnswerStatus
 from domain.rag.models import RagAnswer, RagAnswerStatus
 from infrastructure.config.settings import get_settings
 from interfaces.web.chat_schemas import ChatRequest
+from domain.memory.context import MemoryContext
 
 
 class FakePool:
@@ -34,7 +35,7 @@ class FakeSession:
     def set_agent_mode(self, value):
         self.agent_mode = value
 
-    async def chat_stream(self, text, user_id):
+    async def chat_stream(self, text, user_id, conversation_id=None):
         self.called = True
         yield {"type": "token", "text": "普通"}
         yield {"type": "done", "text": "普通回答", "error": ""}
@@ -44,7 +45,17 @@ class FakeRagGraph:
     def __init__(self):
         self.called = False
 
-    async def answer(self, repo, knowledge_base_id, query, top_k):
+    async def answer(
+        self,
+        repo,
+        knowledge_base_id,
+        query,
+        top_k,
+        conversation_context=None,
+        user_memory_context=None,
+        owner_id="system",
+        conversation_id=None,
+    ):
         self.called = True
         return RagAnswer(
             query=query,
@@ -60,7 +71,17 @@ class FakeHybridGraph:
     def __init__(self):
         self.called = False
 
-    async def answer(self, repo, knowledge_base_id, query, top_k):
+    async def answer(
+        self,
+        repo,
+        knowledge_base_id,
+        query,
+        top_k,
+        conversation_context=None,
+        user_memory_context=None,
+        owner_id="system",
+        conversation_id=None,
+    ):
         self.called = True
         return HybridAnswer(
             query=query,
@@ -77,7 +98,7 @@ class FakeAutoRouter:
         self.mode = mode
         self.calls = 0
 
-    async def route(self, query):
+    async def route(self, query, owner_id="system"):
         self.calls += 1
         return RouteDecision(
             mode=self.mode,
@@ -134,11 +155,28 @@ class Stage5OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             "app.chat.orchestrator.PgKnowledgeRepository",
             FakeOwnedRepository,
         ):
-            events = await self.collect(
-                self.build(rag, hybrid, router),
-                request,
-                session,
-            )
+            orchestrator = self.build(rag, hybrid, router)
+            with patch.object(
+                orchestrator,
+                "_build_memory_context",
+                new=AsyncMock(
+                    return_value=(
+                        MemoryContext(
+                            user_id="user-a",
+                            conversation_id=request.conversation_id,
+                            mode="knowledge",
+                            knowledge_base_id=request.knowledge_base_id,
+                            user_memory_context="",
+                        ),
+                        [],
+                    )
+                ),
+            ):
+                events = await self.collect(
+                    orchestrator,
+                    request,
+                    session,
+                )
 
         self.assertTrue(hybrid.called)
         self.assertFalse(rag.called)
@@ -160,11 +198,28 @@ class Stage5OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             "app.chat.orchestrator.PgKnowledgeRepository",
             FakeOwnedRepository,
         ):
-            events = await self.collect(
-                self.build(rag, hybrid, router),
-                request,
-                session,
-            )
+            orchestrator = self.build(rag, hybrid, router)
+            with patch.object(
+                orchestrator,
+                "_build_memory_context",
+                new=AsyncMock(
+                    return_value=(
+                        MemoryContext(
+                            user_id="user-a",
+                            conversation_id=request.conversation_id,
+                            mode="knowledge",
+                            knowledge_base_id=request.knowledge_base_id,
+                            user_memory_context="",
+                        ),
+                        [],
+                    )
+                ),
+            ):
+                events = await self.collect(
+                    orchestrator,
+                    request,
+                    session,
+                )
 
         self.assertTrue(rag.called)
         self.assertFalse(hybrid.called)

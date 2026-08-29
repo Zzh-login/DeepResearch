@@ -21,5 +21,5 @@ if __name__ == "__main__":
     # 调用 uvicorn.run 以单进程阻塞方式启动已导入的 FastAPI 应用 app，
     # 进程持续运行直至被手动终止或异常退出。
     host = os.getenv("SERVER_HOST", "127.0.0.1")
-    port = int(os.getenv("SERVER_PORT", "5000"))
+    port = int(os.getenv("SERVER_PORT", "18923"))
     uvicorn.run(app, host=host, port=port)

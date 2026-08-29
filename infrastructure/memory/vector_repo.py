@@ -29,11 +29,8 @@ from typing import Optional, List, Dict, Any, Callable, Awaitable
 from infrastructure.config.settings import get_settings
 from infrastructure.database.codecs import register_json_codecs
 
-from infrastructure.embedding.bge_m3 import (
-    BGE_M3_DIM,
-    embed_query,
-    embed_documents,
-)
+from infrastructure.embedding.bge_m3 import BGE_M3_DIM
+from domain.model_gateway.contracts import ModelRequestContext
 
 # EmbedFn: async (text: str) -> list[float]  （也兼容返回普通 list 的同步函数）
 EmbedFn = Callable[[str], Awaitable[List[float]]]
@@ -62,6 +59,8 @@ class VectorMemory:
         dsn: Optional[str] = None,
         embedding_dim: int = BGE_M3_DIM,
         embed_fn: Optional[EmbedFn] = None,
+        model_gateway=None,
+        owner_id: str = "system",
     ):
         """初始化向量记忆存储。
 
@@ -69,12 +68,16 @@ class VectorMemory:
             dsn: PostgreSQL 连接串；缺省时读取项目 Settings.pg_dsn，
                  由 .env 的 PG_DSN 覆盖。
             embedding_dim: 向量维度（默认 1024，与 BGE-M3 一致）。
-            embed_fn: 可插拔的异步 embedding 函数；为 None 时走默认 BGE-M3。
+            embed_fn: 可插拔的异步 embedding 函数；为 None 时走模型网关。
+            model_gateway: 模型网关；embed_fn 为 None 且未注入时运行时抛错。
+            owner_id: 触发向量化的用户标识（用于审计 context）。
         连接池与建表均惰性创建（首次 _get_pool 时），构造本身不连库。
         """
         self._dsn = dsn or get_settings().pg_dsn
         self._embedding_dim = embedding_dim
         self._embed_fn: Optional[EmbedFn] = embed_fn
+        self._model_gateway = model_gateway
+        self._owner_id = owner_id
         self._pool = None
         self._table_ready = False
 
@@ -260,24 +263,29 @@ class VectorMemory:
 
     async def _embed(self, text: str, is_query: bool = False) -> List[float]:
         """
-        文本 → 向量（默认 BGE-M3，可插拔 embed_fn）
+        文本 → 向量（优先 embed_fn，否则走模型网关）
 
-        is_query=True 时（检索查询）走 BGE-M3 查询前缀分支；
+        is_query=True 时（检索查询）走查询向量化；
         自定义 embed_fn 不感知该标志（直接传 text），保持向后兼容。
         """
         if self._embed_fn is not None:
             out = self._embed_fn(text)
-        else:
-            # 默认走 BGE-M3（embedding 逻辑已抽离到 infrastructure.embedding.bge_m3）
-            if is_query:
-                out = await embed_query(text)
-            else:
-                results = await embed_documents([text])
-                out = results[0]
-        # 兼容同步函数（返回 list）与异步函数（返回 coroutine）
-        if asyncio.iscoroutine(out):
-            out = await out
-        return out
+            if asyncio.iscoroutine(out):
+                out = await out
+            return out
+        # 生产：统一走模型网关（预算/审计/统计）
+        if self._model_gateway is None:
+            raise RuntimeError("生产 VectorMemory 必须注入 ModelGateway")
+        result = await self._model_gateway.embed(
+            [text],
+            is_query=is_query,
+            context=ModelRequestContext(
+                owner_id=self._owner_id,
+                mode="normal",
+                operation="memory_embedding",
+            ),
+        )
+        return result.vectors[0]
 
     # ---- 工具 ----
 

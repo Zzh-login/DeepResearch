@@ -29,7 +29,7 @@ from infrastructure.knowledge.pg_repository import (
     PgKnowledgeRepository,
 )
 from infrastructure.knowledge.text_splitter import KnowledgeTextSplitter
-from infrastructure.embedding.bge_m3 import embed_query
+from domain.model_gateway.contracts import ModelRequestContext
 from app.knowledge.ingestion_service import IngestionService
 
 # ── 文件上传配置 ──
@@ -116,16 +116,21 @@ def _get_repo(request: Request, owner_id: str) -> PgKnowledgeRepository:
     return PgKnowledgeRepository(db, owner_id)
 
 
-def _get_service(repo: PgKnowledgeRepository) -> IngestionService:
+def _get_service(repo: PgKnowledgeRepository, request: Request) -> IngestionService:
     """创建入库服务实例。
 
     Args:
         repo: 已限定用户的 PgKnowledgeRepository 实例。
+        request: FastAPI Request，从中提取共享的 model_gateway。
 
     Returns:
         配置好的 IngestionService 实例。
     """
-    return IngestionService(repo, _splitter)
+    return IngestionService(
+        repo,
+        _splitter,
+        request.app.state.services.model_gateway,
+    )
 
 
 async def _verify_kb_ownership(repo: PgKnowledgeRepository, kb_id: UUID) -> None:
@@ -384,7 +389,7 @@ async def upload_document(
         raise
 
     # g) 后台异步入库
-    service = _get_service(repo)
+    service = _get_service(repo, request)
     background_tasks.add_task(service.ingest_document, doc_id, task_id)
 
     # h) 立即返回（含 task_id）
@@ -540,7 +545,7 @@ async def search_knowledge_base(
     处理流程:
         1. 校验 query 非空、top_k 在 1-100
         2. 验证知识库归属
-        3. query → embed_query → 查询向量
+        3. query → gateway.embed → 查询向量
         4. repo.search_chunks → 向量检索
 
     返回:
@@ -568,8 +573,18 @@ async def search_knowledge_base(
     kb_uuid = _parse_uuid(kb_id, "知识库")
     await _verify_kb_ownership(repo, kb_uuid)
 
-    # 查询向量化
-    query_embedding = await embed_query(query)
+    # 查询向量化（统一走模型网关：预算/审计/统计）
+    gateway = request.app.state.services.model_gateway
+    embedding_result = await gateway.embed(
+        [query],
+        is_query=True,
+        context=ModelRequestContext(
+            owner_id=user_id,
+            mode="knowledge",
+            operation="knowledge_query_embedding",
+        ),
+    )
+    query_embedding = embedding_result.vectors[0]
 
     # 向量检索
     results = await repo.search_chunks(kb_uuid, query_embedding, top_k)

@@ -183,3 +183,38 @@ class PgConversationRepository:
                 limit,
             )
         return [dict(row) for row in rows]
+    async def list_context_messages(
+        self,
+        conversation_id: UUID,
+        limit: int = 10,
+    ) -> list[dict]:
+        async with self._database.pool.acquire() as conn:
+            owned = await conn.fetchval(
+                """
+                SELECT 1
+                FROM conversations
+                WHERE id=$1 AND owner_id=$2
+                """,
+                conversation_id,
+                self._owner_id,
+            )
+
+            if not owned:
+                raise LookupError("会话不存在或无权访问")
+
+            rows = await conn.fetch(
+                """
+                SELECT role, content, requested_mode,
+                    resolved_mode, created_at
+                FROM chat_messages
+                WHERE conversation_id=$1
+                AND owner_id=$2
+                ORDER BY created_at DESC, id DESC
+                LIMIT $3
+                """,
+                conversation_id,
+                self._owner_id,
+                limit,
+            )
+
+        return [dict(row) for row in reversed(rows)]

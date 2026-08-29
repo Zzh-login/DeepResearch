@@ -16,11 +16,14 @@ os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
+from app.composition import build_services
 from app.research.graph import DeepResearchGraph
+from app.research.export_worker import ResearchExportWorker
 from app.research.worker import ResearchWorker
 from infrastructure.config.settings import get_settings
 from infrastructure.database.postgres import PostgresDatabase
 from infrastructure.research.pg_repository import PgResearchRepository
+from infrastructure.model_gateway.audit_repository import AuditRepository
 
 
 logging.basicConfig(
@@ -58,9 +61,23 @@ async def main():
         if not locked:
             raise RuntimeError("已有 Research Worker 正在运行")
 
-        repo = PgResearchRepository(database)
-        graph = DeepResearchGraph(settings)
-        worker = ResearchWorker(database, graph, settings)
+        audit_repository = AuditRepository(
+            database,
+            enabled=settings.model_gateway_audit_enabled,
+        )
+        repo = PgResearchRepository(database, audit_repository=audit_repository)
+        services = build_services(database, settings)
+        graph = DeepResearchGraph(
+            settings,
+            model_gateway=services.model_gateway,
+        )
+        worker = ResearchWorker(
+            database,
+            graph,
+            settings,
+            audit_repository=audit_repository,
+        )
+        export_worker = ResearchExportWorker(database, settings)
         instance_id = f"{socket.gethostname()}-{os.getpid()}-{uuid4().hex[:8]}"
         stop_event = asyncio.Event()
         heartbeat = None
@@ -69,6 +86,10 @@ async def main():
         await worker.start()
         if not worker.running:
             raise RuntimeError("Research Worker 启动失败")
+        await export_worker.start()
+        if not export_worker.running:
+            await worker.stop()
+            raise RuntimeError("Research Export Worker 启动失败")
         heartbeat = asyncio.create_task(
             heartbeat_loop(
                 repo,
@@ -80,8 +101,11 @@ async def main():
         logger.info("Research worker started: %s", instance_id)
 
         try:
-            while worker.running:
+            while worker.running and export_worker.running:
                 await asyncio.sleep(1)
+            if not worker.running:
+                raise RuntimeError("Research Worker 意外停止")
+            raise RuntimeError("Research Export Worker 意外停止")
         finally:
             stop_event.set()
             if heartbeat is not None:
@@ -90,6 +114,7 @@ async def main():
                     await heartbeat
             with suppress(Exception):
                 await repo.touch_worker(instance_id, "stopping")
+            await export_worker.stop()
             await worker.stop()
     finally:
         with suppress(Exception):

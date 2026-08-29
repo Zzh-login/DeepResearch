@@ -2,17 +2,18 @@ import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import replace
 from typing import Any, TypedDict
 from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from openai import LengthFinishReasonError
 from pydantic import ValidationError
 
 from app.rag.retrieval_service import RetrievalService
+from domain.research.checkpoint import ResearchCheckpointState
 from domain.research.models import ResearchSource, ResearchSourceType
 from domain.research.report_schema import (
     ReportBlockKind,
@@ -22,6 +23,7 @@ from domain.research.report_schema import (
 from infrastructure.config.settings import Settings
 from infrastructure.knowledge.pg_repository import PgKnowledgeRepository
 from infrastructure.research.web_gateway import ResearchWebGateway
+from domain.model_gateway.contracts import ModelProfile, ModelRequestContext
 
 
 logger = logging.getLogger(__name__)
@@ -85,6 +87,10 @@ MAX_CITATION_REPAIRS = 2
 
 class ResearchCancelled(RuntimeError):
     pass
+
+
+class ResearchPaused(RuntimeError):
+    """Raised when a pause request is observed at a safe graph boundary."""
 
 
 class CitationValidationError(RuntimeError):
@@ -233,6 +239,7 @@ class ResearchState(TypedDict, total=False):
     task_id: UUID
     owner_id: str
     query: str
+    conversation_context: list[dict]
     knowledge_base_id: UUID | None
     repo: Any
     knowledge_repo: Any
@@ -243,39 +250,154 @@ class ResearchState(TypedDict, total=False):
     citations_valid: bool
     citation_issues: list[str]
     repair_count: int
+    user_memory_context: str
+    validation_started: bool
+    resume_state: dict[str, Any]
 
 
 class DeepResearchGraph:
-    def __init__(self, settings: Settings, web_gateway=None, model=None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        web_gateway=None,
+        model=None,
+        model_gateway=None,
+    ) -> None:
         self._settings = settings
         self._web = web_gateway or ResearchWebGateway(settings)
-        self._model = model or ChatOpenAI(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
-            model=settings.deepseek_model,
-            temperature=0.1,
-            max_tokens=16000,
-            max_retries=2,
-            timeout=settings.research_model_timeout_seconds,
-            model_kwargs={"response_format": {"type": "json_object"}},
-            extra_body={"thinking": {"type": "disabled"}},
+        self._model = model
+        self._model_gateway = model_gateway
+        if self._model is None and self._model_gateway is None:
+            raise RuntimeError("生产研究 Graph 必须注入 ModelGateway")
+        self._retrieval = RetrievalService(
+            min_score=settings.rag_min_score,
+            model_gateway=model_gateway,
         )
-        self._retrieval = RetrievalService(min_score=settings.rag_min_score)
         self._graph = self._build()
 
-    async def _call_model(self, system: str, prompt: str) -> str:
-        response = await asyncio.wait_for(
-            self._model.ainvoke(
-                [SystemMessage(content=system), HumanMessage(content=prompt)]
-            ),
-            timeout=self._settings.research_model_timeout_seconds,
+    @staticmethod
+    def _response_usage(response) -> tuple[int | None, int | None]:
+        usage = getattr(response, "usage_metadata", None) or {}
+        if not usage:
+            metadata = getattr(response, "response_metadata", None) or {}
+            usage = metadata.get("token_usage") or metadata.get("usage") or {}
+        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
+        output_tokens = usage.get(
+            "output_tokens",
+            usage.get("completion_tokens"),
         )
-        text = str(response.content or "").strip()
+        return (
+            int(input_tokens) if input_tokens is not None else None,
+            int(output_tokens) if output_tokens is not None else None,
+        )
+
+    async def _record_usage(
+        self,
+        state: ResearchState,
+        operation: str,
+        started_at: float,
+        *,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        provider: str = "deepseek",
+        model: str | None = None,
+    ) -> None:
+        try:
+            input_rate = self._settings.research_model_input_cost_per_1k_usd
+            output_rate = self._settings.research_model_output_cost_per_1k_usd
+            estimated_cost = None
+            if (
+                input_tokens is not None
+                and output_tokens is not None
+                and (input_rate or output_rate)
+            ):
+                estimated_cost = (
+                    input_tokens * input_rate
+                    + output_tokens * output_rate
+                ) / 1000
+            await state["repo"].record_usage(
+                state["task_id"],
+                operation,
+                provider,
+                model or self._settings.deepseek_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=max(0, int((time.perf_counter() - started_at) * 1000)),
+                estimated_cost=estimated_cost,
+                # Provider 未返回完整 token 时，不估算费用或伪造 token。
+                usage_estimated=False,
+            )
+        except Exception:
+            logger.warning(
+                "Unable to persist research usage task=%s operation=%s",
+                state.get("task_id"),
+                operation,
+                exc_info=True,
+            )
+
+    async def _call_model(
+        self,
+        system: str,
+        prompt: str,
+        *,
+        state: ResearchState | None = None,
+        operation: str = "research_plan",
+    ) -> str:
+        started_at = time.perf_counter()
+        messages = [
+            SystemMessage(content=system),
+            HumanMessage(content=prompt),
+        ]
+        if self._model is not None:
+            try:
+                response = await asyncio.wait_for(
+                    self._model.ainvoke(messages),
+                    timeout=self._settings.research_model_timeout_seconds,
+                )
+            except Exception:
+                if state is not None:
+                    await self._record_usage(state, operation, started_at)
+                raise
+            if state is not None:
+                input_tokens, output_tokens = self._response_usage(response)
+                await self._record_usage(
+                    state,
+                    operation,
+                    started_at,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+            text = str(response.content or "").strip()
+        else:
+            context = ModelRequestContext(
+                owner_id=str(state["owner_id"] if state else "system"),
+                mode="deep_research",
+                operation=operation,
+                research_task_id=state.get("task_id") if state else None,
+            )
+            result = await self._model_gateway.complete(
+                messages,
+                ModelProfile(
+                    operation=operation,
+                    temperature=0.1,
+                    max_tokens=16000,
+                    timeout_seconds=self._settings.research_model_timeout_seconds,
+                ),
+                context,
+            )
+            text = result.text.strip()
         if not text:
             raise RuntimeError("研究模型返回空内容")
         return text
 
-    async def _call_model_json(self, system: str, prompt: str) -> ResearchReport:
+    async def _call_model_json(
+        self,
+        system: str,
+        prompt: str,
+        *,
+        state: ResearchState | None = None,
+        operation: str = "research_write",
+    ) -> ResearchReport:
         retry_prompt = (
             prompt
             + "\n\n【重试】上一次输出不完整或不是合法 JSON（可能是太长被截断、或缺少逗号/括号）。"
@@ -283,11 +405,21 @@ class DeepResearchGraph:
             "只输出一个完整、合法的 JSON 对象，确保括号闭合、逗号齐全、不要截断。"
         )
         try:
-            raw = await self._call_model(system, prompt)
+            raw = await self._call_model(
+                system,
+                prompt,
+                state=state,
+                operation=operation,
+            )
             return _parse_report_json(raw)
         except (RuntimeError, LengthFinishReasonError):
             try:
-                raw = await self._call_model(system, retry_prompt)
+                raw = await self._call_model(
+                    system,
+                    retry_prompt,
+                    state=state,
+                    operation=operation,
+                )
                 return _parse_report_json(raw)
             except LengthFinishReasonError as exc:
                 raise RuntimeError(
@@ -297,11 +429,166 @@ class DeepResearchGraph:
     async def _check_cancelled(self, state: ResearchState) -> None:
         if await state["repo"].is_cancelled(state["task_id"]):
             raise ResearchCancelled("研究任务已取消")
+        if await state["repo"].is_pause_requested(state["task_id"]):
+            raise ResearchPaused("研究任务已请求暂停")
+
+    async def _transition(
+        self,
+        state: ResearchState,
+        expected_status: str,
+        target_status: str,
+        current_step: str,
+        progress: int,
+    ) -> None:
+        await self._check_cancelled(state)
+        changed = await state["repo"].transition_status(
+            state["task_id"],
+            expected_status,
+            target_status,
+            current_step,
+            progress,
+        )
+        if not changed:
+            raise ResearchCancelled("研究任务已取消或状态已终止")
+
+    @staticmethod
+    def _checkpoint_sources(
+        sources: list[ResearchSource],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "source_id": source.source_id,
+                "source_type": source.source_type.value,
+                "title": source.title,
+                "excerpt": source.excerpt,
+                "content": source.content,
+                "score": source.score,
+                "url": source.url,
+                "filename": source.filename,
+                "metadata": source.metadata,
+            }
+            for source in sources
+        ]
+
+    async def _save_checkpoint(
+        self,
+        state: ResearchState,
+        node_name: str,
+        *,
+        scope: str | None = None,
+        plan_queries: list[str] | None = None,
+        sources: list[ResearchSource] | None = None,
+        report: dict[str, Any] | None = None,
+        expected_status: str | None = None,
+        target_status: str | None = None,
+        current_step: str | None = None,
+        progress: int | None = None,
+    ) -> None:
+        checkpoint = ResearchCheckpointState(
+            query=state["query"],
+            scope=(
+                scope
+                if scope is not None
+                else state.get("scope", "")
+            ),
+            plan={
+                "queries": (
+                    plan_queries
+                    if plan_queries is not None
+                    else state.get("plan_queries", [])
+                )
+            },
+            sources=self._checkpoint_sources(
+                sources
+                if sources is not None
+                else state.get("sources", [])
+            ),
+            report_draft=(
+                report
+                if report is not None
+                else state.get("report", {})
+            ),
+            current_node=node_name,
+            attempt=state.get("repair_count", 0),
+        )
+
+        if expected_status and target_status:
+            await state["repo"].save_checkpoint_and_transition(
+                task_id=state["task_id"],
+                checkpoint=checkpoint,
+                expected_status=expected_status,
+                target_status=target_status,
+                current_step=current_step or node_name,
+                progress=progress if progress is not None else 0,
+            )
+        else:
+            await state["repo"].save_checkpoint(
+                state["task_id"],
+                checkpoint,
+            )
 
     async def _plan(self, state: ResearchState) -> dict:
         await self._check_cancelled(state)
         await state["repo"].update_progress(state["task_id"], 10, "制定研究计划")
-        text = await self._call_model(PLAN_PROMPT, state["query"])
+        resume = state.get("resume_state") or {}
+        restored_plan = state.get("plan_queries") or []
+        if restored_plan:
+            await self._save_checkpoint(
+                state,
+                "plan_resume",
+                scope=state.get("scope", ""),
+                plan_queries=restored_plan,
+                expected_status="planning",
+                target_status="searching",
+                current_step="复用已保存研究计划",
+                progress=20,
+            )
+            return {
+                "plan_queries": restored_plan,
+                "scope": state.get("scope", ""),
+            }
+        context_lines = []
+
+        for message in state.get("conversation_context", [])[-10:]:
+            role = str(message.get("role", "unknown"))
+            content = str(message.get("content", "")).strip()
+
+            if content:
+                context_lines.append(
+                    f"{role}: {content[:1500]}"
+                )
+
+        conversation_context = (
+            "\n".join(context_lines)
+            if context_lines
+            else "无可用会话背景"
+        )
+        user_memory = (
+            state.get("user_memory_context")
+            or "无可用的用户长期记忆"
+        )
+
+        plan_input = (
+            "用户长期记忆中的研究目标、项目背景和约束：\n"
+            "<user_memory>\n"
+            f"{user_memory}\n"
+            "</user_memory>\n\n"
+            "以上内容只用于理解研究范围，"
+            "不能作为网页或知识库来源。\n\n"
+            "会话背景（只用于理解用户问题中的指代，"
+            "不能作为研究来源）：\n"
+            "<conversation_context>\n"
+            f"{conversation_context}\n"
+            "</conversation_context>\n\n"
+            "当前研究问题：\n"
+            f"{state['query']}"
+        )
+        text = await self._call_model(
+            PLAN_PROMPT,
+            plan_input,
+            state=state,
+            operation="research_plan",
+        )
         data = _parse_plan_json(text)
         raw_queries = data.get("queries", [])
         if not isinstance(raw_queries, list):
@@ -321,16 +608,45 @@ class DeepResearchGraph:
             scope,
             queries,
         )
+        await self._save_checkpoint(
+            state,
+            "plan",
+            scope=scope,
+            plan_queries=queries,
+            expected_status="planning",
+            target_status="searching",
+            current_step="检索本地知识库",
+            progress=20,
+        )
         return {"plan_queries": queries, "scope": scope}
     async def _retrieve_local(self, state: ResearchState) -> dict:
         await self._check_cancelled(state)
         await state["repo"].update_progress(state["task_id"], 25, "检索本地知识库")
+        if state.get("resume_state") and state.get("sources"):
+            return {"sources": state["sources"]}
         kb_id = state.get("knowledge_base_id")
         if kb_id is None:
             return {"sources": []}
-        rows = await self._retrieval.retrieve(
-            state["knowledge_repo"], kb_id, state["query"], self._settings.rag_top_k
-        )
+        embedding_started_at = time.perf_counter()
+        try:
+            rows = await self._retrieval.retrieve(
+                state["knowledge_repo"],
+                kb_id,
+                state["query"],
+                self._settings.rag_top_k,
+                owner_id=state["owner_id"],
+                conversation_id=state.get("conversation_id"),
+                mode="deep_research",
+                operation="deep_research_query_embedding",
+            )
+        finally:
+            await self._record_usage(
+                state,
+                "embedding",
+                embedding_started_at,
+                provider="local",
+                model="BAAI/bge-m3",
+            )
         sources = [
             ResearchSource(
                 source_id=f"K{index}",
@@ -354,6 +670,20 @@ class DeepResearchGraph:
     async def _search_web(self, state: ResearchState) -> dict:
         await self._check_cancelled(state)
         await state["repo"].update_progress(state["task_id"], 40, "搜索互联网")
+        if state.get("resume_state") and any(
+            source.source_type == ResearchSourceType.WEB
+            for source in state.get("sources", [])
+        ):
+            await self._save_checkpoint(
+                state,
+                "sources_resume",
+                sources=state["sources"],
+                expected_status="searching",
+                target_status="reading",
+                current_step="复用已保存来源",
+                progress=55,
+            )
+            return {"sources": state["sources"]}
         raw_results = []
         for ordinal, query in enumerate(state["plan_queries"], 1):
             await state["repo"].update_subtask(
@@ -440,11 +770,41 @@ class DeepResearchGraph:
             state["task_id"],
             limited_sources,
         )
+        await self._save_checkpoint(
+            state,
+            "sources",
+            sources=limited_sources,
+            expected_status="searching",
+            target_status="reading",
+            current_step="整理和读取来源",
+            progress=55,
+        )
         return {"sources": limited_sources}
 
     async def _write_report(self, state: ResearchState) -> dict:
         await self._check_cancelled(state)
-        await state["repo"].update_progress(state["task_id"], 70, "撰写研究报告")
+        await self._transition(
+            state,
+            "reading",
+            "writing",
+            "撰写研究报告",
+            70,
+        )
+        if state.get("resume_state") and state.get("report"):
+            await self._save_checkpoint(
+                state,
+                "report_resume",
+                report=state["report"],
+                expected_status="writing",
+                target_status="verifying",
+                current_step="校验研究报告",
+                progress=85,
+            )
+            return {
+                "report": state["report"],
+                "repair_count": 0,
+                "validation_started": True,
+            }
         blocks = []
         for source in state["sources"]:
             location = source.url or source.filename or source.title
@@ -458,11 +818,39 @@ class DeepResearchGraph:
             f"研究范围：\n{state.get('scope', '')}\n\n"
             f"来源：\n" + "\n\n".join(blocks)
         )
-        report = await self._call_model_json(REPORT_PROMPT, prompt)
-        return {"report": report.model_dump(mode="json"), "repair_count": 0}
+        report = await self._call_model_json(
+            REPORT_PROMPT,
+            prompt,
+            state=state,
+            operation="research_write",
+        )
+        report_data = report.model_dump(mode="json")
 
-    @staticmethod
-    async def _validate(state: ResearchState) -> dict:
+        await self._save_checkpoint(
+            state,
+            "report",
+            report=report_data,
+            expected_status="writing",
+            target_status="verifying",
+            current_step="校验研究报告",
+            progress=85,
+        )
+
+        return {
+            "report": report_data,
+            "repair_count": 0,
+            "validation_started": True,
+        }
+
+    async def _validate(self, state: ResearchState) -> dict:
+        if not state.get("validation_started"):
+            await self._transition(
+                state,
+                "writing",
+                "verifying",
+                "校验研究报告",
+                85,
+            )
         allowed = {source.source_id for source in state["sources"]}
         try:
             report = ResearchReport.model_validate(state["report"])
@@ -470,10 +858,15 @@ class DeepResearchGraph:
             return {
                 "citations_valid": False,
                 "citation_issues": [f"报告结构无效：{exc}"],
+                "validation_started": True,
             }
 
         issues = _report_issues(report, allowed)
-        return {"citations_valid": not issues, "citation_issues": issues}
+        return {
+            "citations_valid": not issues,
+            "citation_issues": issues,
+            "validation_started": True,
+        }
 
     @staticmethod
     def _after_validate(state: ResearchState) -> str:
@@ -487,6 +880,13 @@ class DeepResearchGraph:
 
     async def _repair(self, state: ResearchState) -> dict:
         await self._check_cancelled(state)
+        await self._transition(
+            state,
+            "verifying",
+            "writing",
+            "修复研究报告",
+            88,
+        )
         allowed = "\n\n".join(
             f"[{s.source_id}] {s.title}\n{s.content}" for s in state["sources"]
         )
@@ -497,10 +897,29 @@ class DeepResearchGraph:
             f"待修复 JSON：\n"
             f"{json.dumps(state['report'], ensure_ascii=False)}"
         )
-        report = await self._call_model_json(REPAIR_PROMPT, prompt)
+        report = await self._call_model_json(
+            REPAIR_PROMPT,
+            prompt,
+            state=state,
+            operation="research_repair",
+        )
+        report_data = report.model_dump(mode="json")
+        repair_count = state.get("repair_count", 0) + 1
+
+        await self._save_checkpoint(
+            state,
+            "repair",
+            report=report_data,
+            expected_status="writing",
+            target_status="verifying",
+            current_step="校验研究报告",
+            progress=85,
+        )
+
         return {
-            "report": report.model_dump(mode="json"),
-            "repair_count": state.get("repair_count", 0) + 1,
+            "report": report_data,
+            "repair_count": repair_count,
+            "validation_started": True,
         }
 
     @staticmethod
@@ -539,17 +958,31 @@ class DeepResearchGraph:
         task: dict,
         repo,
         knowledge_repo: PgKnowledgeRepository,
+        conversation_context: list[dict] | None = None,
+        user_memory_context: str | None = None,
+        resume_state: dict | None = None,
     ) -> dict:
-        final = await self._graph.ainvoke(
-            {
-                "task_id": task["id"],
-                "owner_id": task["owner_id"],
-                "query": task["query"],
-                "knowledge_base_id": task.get("knowledge_base_id"),
-                "repo": repo,
-                "knowledge_repo": knowledge_repo,
-            }
-        )
+        initial: ResearchState = {
+            "task_id": task["id"],
+            "owner_id": task["owner_id"],
+            "query": task["query"],
+            "knowledge_base_id": task.get("knowledge_base_id"),
+            "repo": repo,
+            "knowledge_repo": knowledge_repo,
+            "conversation_context": conversation_context or [],
+            "user_memory_context": user_memory_context or "",
+        }
+        if resume_state:
+            plan = resume_state.get("plan") or {}
+            initial["scope"] = resume_state.get("scope", "")
+            initial["plan_queries"] = plan.get("queries", [])
+            initial["sources"] = self.restore_sources(
+                resume_state.get("sources", [])
+            )
+            initial["report"] = resume_state.get("report_draft") or {}
+            initial["resume_state"] = resume_state
+
+        final = await self._graph.ainvoke(initial)
         report = ResearchReport.model_validate(final["report"])
         return {
             "schema_version": report.schema_version,
@@ -558,3 +991,19 @@ class DeepResearchGraph:
             "citation_ids": _citation_ids(report),
             "scope": final.get("scope", ""),
         }
+    @staticmethod
+    def restore_sources(items: list[dict]) -> list[ResearchSource]:
+        return [
+            ResearchSource(
+                source_id=item["source_id"],
+                source_type=ResearchSourceType(item["source_type"]),
+                title=item.get("title", ""),
+                excerpt=item.get("excerpt", ""),
+                content=item.get("content", ""),
+                score=float(item.get("score", 0)),
+                url=item.get("url"),
+                filename=item.get("filename"),
+                metadata=item.get("metadata") or {},
+            )
+            for item in items
+        ]

@@ -123,6 +123,8 @@ class MemoryExtractor:
         user_input: str,
         assistant_reply: str,
         source: str = "default",
+        memory_scope: str = "user",
+        source_type: str = "normal_chat",
     ) -> None:
         """从一轮对话中异步抽取长期记忆并写入冷层（fire-and-forget 调用）。
 
@@ -132,6 +134,12 @@ class MemoryExtractor:
         自带"空闲跳过"：连续无记忆达阈值后跳过后续若干轮。
         任何异常（超时 / JSON 解析 / 其他）均被吞掉并打日志，不影响主回复。
         """
+        if memory_scope != "user":
+            return
+
+        if source_type != "normal_chat":
+            return
+        
         if self._skip_until > 0:
             self._skip_until -= 1
             return

@@ -4,24 +4,24 @@ LangGraph 决策图 —— 替代原有 Pipeline 的对话生成引擎（阶段2
 设计要点：
   - 自定义 StateGraph 实现 ReAct 式「模型决策 → 工具执行 → 再决策」循环，
     取代基础设施层自研的 AgentRunner 工具循环（Router + 工具循环）。
-  - 流式：call_model 节点用 model.astream 逐块累计后 yield 出完整 AIMessage，
-    配合 graph.astream_events(version="v2") 捕获 on_chat_model_stream 事件，
-    实现逐 token 推前端打字机效果（API 与 pipeline.generate_stream 同签名）。
-    注意：call_model 必须「逐块 astream + 累计后 yield」，不能只 return/ainvoke，
-    否则子层流式事件不会冒泡到 astream_events，前端收不到 token。
-  - Tools：通过 ChatOpenAI.bind_tools 原生 function calling；工具失败由
-    ToolRegistry / 原 Tool 降级，不向上抛异常。
-  - agent_mode 关闭时退化为纯对话（不绑定工具，与改造前行为一致，可一键回退）。
+  - 流式：生产环境经 ModelGateway.stream 统一走网关（预算/熔断/审计），
+    用 asyncio.Queue 显式 token 队列把逐 token 推给 generate_stream，
+    实现前端打字机效果（网关包裹后 on_chat_model_stream 事件不再自动冒泡，
+    故改为显式队列）。
+  - Tools：agent_mode 开启时把 tools 传给 gateway.stream 做原生 function calling；
+    工具失败由 ToolRegistry / 原 Tool 降级，不向上抛异常。
+  - agent_mode 关闭时退化为纯对话（不传 tools，与改造前行为一致，可一键回退）。
 
-依赖：langchain-openai（ChatOpenAI 指向 DeepSeek）+ langgraph（StateGraph）。
+依赖：ModelGateway（供应商无关，内部指向 DeepSeek）+ langgraph（StateGraph）。
 """
 
+import asyncio
 import os
 from typing import Annotated, Any, AsyncGenerator, List, Optional, TypedDict
+from uuid import UUID
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
@@ -29,6 +29,8 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+
+from domain.model_gateway.contracts import ModelProfile, ModelRequestContext
 
 from .context_builder import ContextBuilder
 
@@ -38,10 +40,13 @@ DEFAULT_MODEL = "deepseek-chat"
 MAX_TOOL_ITERATIONS = 10
 
 
-class State(TypedDict):
+class State(TypedDict, total=False):
     """LangGraph 状态：消息列表用 add_messages reducer 自动追加。"""
 
     messages: Annotated[list, add_messages]
+    owner_id: str
+    conversation_id: UUID | None
+    token_queue: asyncio.Queue[str | None]
 
 class GraphAgent:
     """基于 LangGraph 的对话生成引擎，对外暴露 generate_stream 流式入口。"""
@@ -50,29 +55,28 @@ class GraphAgent:
         self,
         tools: list,
         context_builder: ContextBuilder,
-        settings,                                  # ← 新增：由外部注入
+        settings,
+        model=None,
+        model_gateway=None,
         agent_mode: bool = True,
         temperature: float = 0.7,
         max_tokens: int = 2048,
     ):
         self._context_builder = context_builder
         self._agent_mode = agent_mode
-        self._settings = settings                   # ← 现在 settings 是参数，合法了
-
-        self._model = ChatOpenAI(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
-            model=settings.deepseek_model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            streaming=True,
-            extra_body={"thinking": {"type": "disabled"}},
-        )
-        # 工具：仅 agent_mode 开启时绑定到模型
-        self._tool_map = {t.name: t for t in tools}
+        self._settings = settings
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+        self._model = model
+        self._model_gateway = model_gateway
+        if self._model is None and self._model_gateway is None:
+            raise RuntimeError("生产 Session Graph 必须注入 ModelGateway")
+        self._tool_map = {tool.name: tool for tool in tools}
         self._tools = tools
         self._model_with_tools = (
-            self._model.bind_tools(tools) if tools else self._model
+            self._model.bind_tools(tools)
+            if self._model is not None and tools
+            else self._model
         )
 
         self._graph = self._build()
@@ -86,10 +90,34 @@ class GraphAgent:
         - agent_mode 开 → 用绑定了工具的模型（可能产出 tool_calls）
         - agent_mode 关 → 用裸模型（纯对话）
         """
-        model = self._model_with_tools if self._agent_mode else self._model
+        if self._model is not None:
+            model = self._model_with_tools if self._agent_mode else self._model
+            stream = model.astream(state["messages"])
+        else:
+            stream = self._model_gateway.stream(
+                state["messages"],
+                ModelProfile(
+                    operation="normal_chat",
+                    temperature=self._temperature,
+                    max_tokens=self._max_tokens,
+                    timeout_seconds=self._settings.model_gateway_timeout_seconds,
+                ),
+                ModelRequestContext(
+                    owner_id=state["owner_id"],
+                    mode="normal",
+                    operation="normal_chat",
+                    conversation_id=state.get("conversation_id"),
+                    idempotent=False,
+                ),
+                self._tools if self._agent_mode else None,
+            )
         full = None
-        async for chunk in model.astream(state["messages"]):
+        async for chunk in stream:
             full = chunk if full is None else full + chunk
+            text = getattr(chunk, "content", "")
+            queue = state.get("token_queue")
+            if text and queue is not None:
+                await queue.put(str(text))
         if full is None:
             return
         # 把累计出的 AIMessageChunk 转成标准 AIMessage 再写回 state，
@@ -185,7 +213,13 @@ class GraphAgent:
     # ───────────────────────────── 对外入口 ─────────────────────────────
 
     async def generate_stream(
-        self, user_text, history, user_id, include_vector, persona_override
+        self,
+        user_text,
+        history,
+        user_id,
+        conversation_id,
+        include_vector,
+        persona_override,
     ) -> AsyncGenerator[str, None]:
         """
         流式生成一轮回答（逐 token 产出，供 WebSocket 推前端打字机效果）。
@@ -193,12 +227,33 @@ class GraphAgent:
         只把「最终回答」的内容块 yield 出去；工具调用阶段（tool_calls 块）
         content 为空，被过滤掉，不污染前端显示。
         """
-        lc = await self._build_messages(
+        lc_messages = await self._build_messages(
             user_text, history, user_id, include_vector, persona_override
         )
-        async for ev in self._graph.astream_events({"messages": lc}, version="v2"):
-            if ev.get("event") == "on_chat_model_stream":
-                chunk = ev["data"]["chunk"]
-                text = getattr(chunk, "content", None)
-                if text:
-                    yield text
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def invoke_graph() -> None:
+            try:
+                await self._graph.ainvoke(
+                    {
+                        "messages": lc_messages,
+                        "owner_id": user_id,
+                        "conversation_id": conversation_id,
+                        "token_queue": queue,
+                    }
+                )
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(invoke_graph())
+        try:
+            while True:
+                token = await queue.get()
+                if token is None:
+                    break
+                yield token
+            await task
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)

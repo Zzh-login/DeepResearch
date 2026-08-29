@@ -1,6 +1,8 @@
 import inspect
 import json
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from app.research.graph import (
     DeepResearchGraph,
@@ -194,6 +196,48 @@ class ResearchGraphTests(unittest.TestCase):
         self.assertIn("citation_ids", REPORT_PROMPT)
         self.assertIn("based_on_block_ids", REPORT_PROMPT)
 
+    def test_deep_research_injects_model_gateway_into_retrieval(self):
+        gateway = object()
+        graph = DeepResearchGraph(
+            SimpleNamespace(rag_min_score=0.45),
+            model=object(),
+            model_gateway=gateway,
+        )
+        self.assertIs(graph._retrieval._model_gateway, gateway)
+
+    def test_deep_research_local_retrieval_uses_research_context(self):
+        graph = object.__new__(DeepResearchGraph)
+        graph._settings = SimpleNamespace(
+            rag_top_k=5,
+            research_model_input_cost_per_1k_usd=0.0,
+            research_model_output_cost_per_1k_usd=0.0,
+        )
+        graph._retrieval = SimpleNamespace(retrieve=AsyncMock(return_value=[]))
+        state = {
+            "task_id": "task",
+            "owner_id": "owner-a",
+            "query": "研究问题",
+            "knowledge_base_id": "kb",
+            "knowledge_repo": object(),
+            "repo": SimpleNamespace(
+                update_progress=AsyncMock(),
+                record_usage=AsyncMock(),
+            ),
+        }
+
+        # 跳过状态迁移检查，只验证传给检索服务的业务上下文。
+        graph._check_cancelled = AsyncMock()
+        import asyncio
+        asyncio.run(graph._retrieve_local(state))
+
+        kwargs = graph._retrieval.retrieve.await_args.kwargs
+        self.assertEqual(kwargs["owner_id"], "owner-a")
+        self.assertEqual(kwargs["mode"], "deep_research")
+        self.assertEqual(
+            kwargs["operation"],
+            "deep_research_query_embedding",
+        )
+
     def test_repair_increments_repair_count(self):
         source = inspect.getsource(DeepResearchGraph._repair)
         self.assertIn('state.get("repair_count", 0) + 1', source)
@@ -212,6 +256,16 @@ class ResearchGraphTests(unittest.TestCase):
             with self.subTest(method=method_name):
                 source = inspect.getsource(getattr(DeepResearchGraph, method_name))
                 self.assertIn("_check_cancelled", source)
+
+    def test_resume_reuses_saved_plan_sources_and_report(self):
+        for method_name, marker in (
+            ("_plan", "复用已保存研究计划"),
+            ("_search_web", "复用已保存来源"),
+            ("_write_report", 'state.get("report")'),
+        ):
+            source = inspect.getsource(getattr(DeepResearchGraph, method_name))
+            self.assertIn("resume_state", source)
+            self.assertIn(marker, source)
 
     def test_graph_requires_real_web_source(self):
         source = inspect.getsource(DeepResearchGraph._search_web)

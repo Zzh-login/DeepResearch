@@ -4,7 +4,6 @@ import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 from app.rag.citations import message_content_to_text
 from domain.chat.routing import (
@@ -13,6 +12,7 @@ from domain.chat.routing import (
     RouteSource,
 )
 from infrastructure.config.settings import Settings
+from domain.model_gateway.contracts import ModelProfile, ModelRequestContext
 
 
 ROUTER_SYSTEM_PROMPT = """你是问答模式分类器，只负责分类，不回答问题。
@@ -69,18 +69,17 @@ class AutoChatRouter:
         "写一段",
     )
 
-    def __init__(self, settings: Settings, model: Any = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        model: Any = None,
+        model_gateway=None,
+    ) -> None:
         self._settings = settings
-        self._model = model or ChatOpenAI(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
-            model=settings.deepseek_model,
-            temperature=0,
-            max_tokens=180,
-            max_retries=1,
-            timeout=settings.auto_router_timeout_seconds,
-            extra_body={"thinking": {"type": "disabled"}},
-        )
+        self._model = model
+        self._model_gateway = model_gateway
+        if self._model is None and self._model_gateway is None:
+            raise RuntimeError("生产 AutoRouter 必须注入 ModelGateway")
 
     @staticmethod
     def _contains_any(query: str, patterns: tuple[str, ...]) -> bool:
@@ -151,7 +150,7 @@ class AutoChatRouter:
             reason=reason,
         )
 
-    async def route(self, query: str) -> RouteDecision:
+    async def route(self, query: str, owner_id: str = "system") -> RouteDecision:
         clean_query = query.strip()
         if not clean_query:
             raise ValueError("问题不能为空")
@@ -161,18 +160,37 @@ class AutoChatRouter:
             return rule_decision
 
         try:
-            response = await asyncio.wait_for(
-                self._model.ainvoke(
+            if self._model is not None:
+                response = await asyncio.wait_for(
+                    self._model.ainvoke(
+                        [
+                            SystemMessage(content=ROUTER_SYSTEM_PROMPT),
+                            HumanMessage(content=f"待分类问题：\n{clean_query}"),
+                        ]
+                    ),
+                    timeout=self._settings.auto_router_timeout_seconds,
+                )
+                response_text = message_content_to_text(response.content)
+            else:
+                result = await self._model_gateway.complete(
                     [
                         SystemMessage(content=ROUTER_SYSTEM_PROMPT),
                         HumanMessage(content=f"待分类问题：\n{clean_query}"),
-                    ]
-                ),
-                timeout=self._settings.auto_router_timeout_seconds,
-            )
+                    ],
+                    ModelProfile(
+                        operation="auto_route",
+                        temperature=0,
+                        max_tokens=180,
+                        timeout_seconds=self._settings.auto_router_timeout_seconds,
+                    ),
+                    ModelRequestContext(
+                        owner_id=owner_id,
+                        mode="auto",
+                        operation="auto_route",
+                    ),
+                )
+                response_text = result.text
         except Exception as exc:
             raise AutoRouterError("自动分类模型调用失败") from exc
 
-        return self._parse_model_decision(
-            message_content_to_text(response.content)
-        )
+        return self._parse_model_decision(response_text)

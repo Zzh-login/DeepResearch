@@ -27,3 +27,20 @@ class ConversationRoutesTests(unittest.TestCase):
     def test_database_failure_maps_to_503(self):
         self.assertIn("ConversationDatabaseRoute", SOURCE)
         self.assertIn("503", SOURCE)
+
+    def test_websocket_does_not_replay_user_global_history(self):
+        app_source = (
+            ROOT / "interfaces" / "web" / "app.py"
+        ).read_text(encoding="utf-8")
+        websocket_block = app_source.split(
+            '@app.websocket("/ws")',
+            1,
+        )[1].split(
+            '@app.websocket("/ws/asr")',
+            1,
+        )[0]
+        self.assertNotIn(
+            "for message in session.get_history()",
+            websocket_block,
+        )
+        self.assertIn("conversation_id", websocket_block)

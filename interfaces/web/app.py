@@ -36,6 +36,9 @@ from infrastructure.research.pg_repository import PgResearchRepository
 from interfaces.web.research_routes import router as research_router
 
 from interfaces.web.conversation_routes import router as conversation_router
+from app.composition import build_services
+from infrastructure.model_gateway.audit_repository import AuditRepository
+from domain.model_gateway.contracts import ModelRequestContext
 
 async def _warmup_embedding() -> None:
     """Warm the local embedding model without making app startup depend on it."""
@@ -71,28 +74,6 @@ async def lifespan(app: FastAPI):
     app.state.hybrid_graph = None
     app.state.auto_router = None
 
-    if not settings.deepseek_api_key:
-        app.state.rag_error = "DEEPSEEK_API_KEY 未配置"
-        print("[RAG] unavailable: DEEPSEEK_API_KEY is missing")
-    else:
-        try:
-            rag_graph = RagGraph(settings)
-            hybrid_graph = HybridGraph(settings)
-            auto_router = AutoChatRouter(settings)
-
-            # 三个对象全部成功后才发布，避免半初始化状态。
-            app.state.rag_graph = rag_graph
-            app.state.hybrid_graph = hybrid_graph
-            app.state.auto_router = auto_router
-            app.state.rag_status = "ok"
-        except Exception as exc:
-            app.state.rag_graph = None
-            app.state.hybrid_graph = None
-            app.state.auto_router = None
-            app.state.rag_status = "unavailable"
-            app.state.rag_error = str(exc)
-            print(f"[RAG] initialization failed: {exc}")
-            
     database = PostgresDatabase(settings.pg_dsn)
     warmup_tasks = []
     manager_started = False
@@ -108,16 +89,48 @@ async def lifespan(app: FastAPI):
         print(f"[Database] unavailable, degraded mode: {exc}")
 
     app.state.database = database
+    app.state.services = build_services(database, settings)
+    gateway = app.state.services.model_gateway
+    audit_repository = AuditRepository(
+        database,
+        enabled=settings.model_gateway_audit_enabled,
+    )
+    app.state.audit_repository = audit_repository
+
+    if not settings.deepseek_api_key:
+        app.state.rag_error = "DEEPSEEK_API_KEY 未配置"
+        print("[RAG] unavailable: DEEPSEEK_API_KEY is missing")
+    else:
+        try:
+            rag_graph = RagGraph(settings, model_gateway=gateway)
+            hybrid_graph = HybridGraph(settings, model_gateway=gateway)
+            auto_router = AutoChatRouter(settings, model_gateway=gateway)
+
+            # 三个对象全部成功后才发布，避免半初始化状态。
+            app.state.rag_graph = rag_graph
+            app.state.hybrid_graph = hybrid_graph
+            app.state.auto_router = auto_router
+            app.state.rag_status = "ok"
+        except Exception as exc:
+            app.state.rag_graph = None
+            app.state.hybrid_graph = None
+            app.state.auto_router = None
+            app.state.rag_status = "unavailable"
+            app.state.rag_error = str(exc)
+            print(f"[RAG] initialization failed: {exc}")
+
+    app.state.session_manager = SessionManager(model_gateway=gateway)
     app.state.chat_orchestrator = ManualChatOrchestrator(
         database=database,
         rag_graph=app.state.rag_graph,
         hybrid_graph=app.state.hybrid_graph,
         auto_router=app.state.auto_router,
         settings=settings,
+        audit_repository=audit_repository,
     )
 
     try:
-        manager.start()
+        app.state.session_manager.start()
         manager_started = True
         warmup_tasks = [
             asyncio.create_task(_warmup_embedding()),
@@ -126,7 +139,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         if manager_started:
-            await manager.stop()
+            await app.state.session_manager.stop()
         for task in warmup_tasks:
             if not task.done():
                 task.cancel()
@@ -136,7 +149,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-manager = SessionManager()
 user_repo = UserRepository()
 
 
@@ -316,9 +328,11 @@ async def auth_me(user_id: str = Depends(get_current_user)):
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/persona")
-async def get_persona(user_id: str = Depends(get_current_user)):
+async def get_persona(
+    request: Request, user_id: str = Depends(get_current_user)
+):
     """获取当前用户的角色设定（persona）文本。"""
-    return manager.get_or_create(user_id).get_persona()
+    return request.app.state.session_manager.get_or_create(user_id).get_persona()
 
 
 @app.post("/persona")
@@ -328,32 +342,44 @@ async def set_persona(request: Request, user_id: str = Depends(get_current_user)
     参数: request - 含 persona 字段的 JSON 请求体。
     """
     data = await request.json()
-    session = manager.get_or_create(user_id)
+    session = request.app.state.session_manager.get_or_create(user_id)
     session.set_persona(data.get("persona", ""))
     return session.get_persona()
 
 
 @app.get("/persona-history")
-async def get_persona_history(user_id: str = Depends(get_current_user)):
+async def get_persona_history(
+    request: Request, user_id: str = Depends(get_current_user)
+):
     """获取当前用户保存的历史角色设定列表。"""
-    return {"items": manager.get_or_create(user_id).get_persona_history()}
+    return {
+        "items": request.app.state.session_manager.get_or_create(
+            user_id
+        ).get_persona_history()
+    }
 
 
 @app.delete("/persona-history/{index}")
-async def remove_persona_history(index: int, user_id: str = Depends(get_current_user)):
+async def remove_persona_history(
+    index: int,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
     """删除指定索引的历史角色设定，返回更新后的历史列表。
 
     参数: index - 要删除的历史角色索引（路径参数）。
     """
-    session = manager.get_or_create(user_id)
+    session = request.app.state.session_manager.get_or_create(user_id)
     session.remove_persona_history(index)
     return {"items": session.get_persona_history()}
 
 
 @app.get("/api-config")
-async def get_api_config(user_id: str = Depends(get_current_user)):
+async def get_api_config(
+    request: Request, user_id: str = Depends(get_current_user)
+):
     """获取当前用户的 API 配置（api_key、base_url、model）。"""
-    return manager.get_or_create(user_id).get_api_config()
+    return request.app.state.session_manager.get_or_create(user_id).get_api_config()
 
 
 @app.post("/api-config")
@@ -363,7 +389,7 @@ async def set_api_config(request: Request, user_id: str = Depends(get_current_us
     参数: request - 含 api_key、base_url、model 字段的 JSON 请求体。
     """
     data = await request.json()
-    session = manager.get_or_create(user_id)
+    session = request.app.state.session_manager.get_or_create(user_id)
     session.set_api_config(
         api_key=data.get("api_key", ""),
         base_url=data.get("base_url", ""),
@@ -373,9 +399,15 @@ async def set_api_config(request: Request, user_id: str = Depends(get_current_us
 
 
 @app.get("/history")
-async def get_history(user_id: str = Depends(get_current_user)):
+async def get_history(
+    request: Request, user_id: str = Depends(get_current_user)
+):
     """获取当前用户的对话历史消息列表。"""
-    return {"messages": manager.get_or_create(user_id).get_history()}
+    return {
+        "messages": request.app.state.session_manager.get_or_create(
+            user_id
+        ).get_history()
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -398,20 +430,12 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.close(code=4401, reason="登录已失效")
         return
 
-    session = manager.get_or_create(user_id)
+    session = ws.app.state.session_manager.get_or_create(user_id)
     orchestrator = ws.app.state.chat_orchestrator
 
-    # 这里只回放普通聊天历史。知识库问答没有写入这份历史。
-    for message in session.get_history():
-        await ws.send_json(
-            {
-                "type": "chat.history",
-                "mode": "normal",
-                "text": message["content"],
-                "role": message["role"],
-                "history": True,
-            }
-        )
+    # 当前会话历史由 REST 接口按 conversation_id 加载。
+    # 这里不能回放 session.get_history()：它是用户级 JSON 历史，没有
+    # conversation_id，会把其他会话的普通聊天追加到当前会话。
 
     try:
         while True:
@@ -505,7 +529,6 @@ async def websocket_endpoint(ws: WebSocket):
 
                     if (
                         event["type"] == "chat.done"
-                        and chat_request.tts_mode == "cloud"
                         and event.get("text")
                         and not event.get("error")
                     ):
@@ -522,16 +545,43 @@ async def websocket_endpoint(ws: WebSocket):
                                 "route_reason": event.get("route_reason"),
                             },
                             citations=event.get("citations", []),
-                        )  
-                        audio = ""
-                        try:
-                            audio = (
-                                await session.synthesize_tts(event["text"])
-                                or ""
-                            )
-                        except Exception as exc:
-                            print(f"[WS] tts error for user={user_id}: {exc}")
-                        finally:
+                        )
+
+                        if event.get("mode") == "normal":
+                            try:
+                                await audit_repository.write(
+                                    ModelRequestContext(
+                                        owner_id=user_id,
+                                        mode="normal",
+                                        operation="chat_answer",
+                                        conversation_id=chat_request.conversation_id,
+                                    ),
+                                    "chat.answer",
+                                    "error" if event.get("error") else "succeeded",
+                                    {
+                                        "requested_mode": chat_request.mode.value,
+                                        "resolved_mode": event.get("mode"),
+                                        "response_chars": len(event.get("text", "")),
+                                        "tts_enabled": chat_request.tts_mode != "off",
+                                    },
+                                    severity="error" if event.get("error") else "info",
+                                )
+                            except Exception:
+                                print(f"[WS] chat audit error for user={user_id}")
+
+                        if chat_request.tts_mode == "cloud":
+                            audio = ""
+
+                            try:
+                                audio = (
+                                    await session.synthesize_tts(event["text"])
+                                    or ""
+                                )
+                            except Exception as exc:
+                                print(
+                                    f"[WS] tts error for user={user_id}: {exc}"
+                                )
+
                             await ws.send_json(
                                 {
                                     "type": "tts.done",
@@ -539,6 +589,7 @@ async def websocket_endpoint(ws: WebSocket):
                                     "audio": audio,
                                 }
                             )
+                            
             except ChatProtocolError as exc:
                 await ws.send_json(
                     {

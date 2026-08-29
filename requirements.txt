@@ -24,6 +24,8 @@ PyYAML==6.0.3
 #/ 文档处理（暂时只支持 pdf txt md docx格式的）
 pypdf==6.15.0
 python-docx==1.2.0
+# Windows 上通过已安装的 Microsoft Word 导出 PDF
+pywin32==311
 aiofiles==25.1.0
 python-multipart==0.0.32
 langchain-text-splitters==1.1.2
