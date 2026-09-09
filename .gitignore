@@ -42,6 +42,13 @@ data/*.json
 data/*.db
 data/knowledge/*
 !data/knowledge/.gitkeep
+data/evals/
+data/research/
+!data/research/.gitkeep
+data/backups/
+data/stage*_backup/
+data/requirements_before_sync.txt
+data/stage*_guide*.md
 
 # ────────────────────────────────
 # 编辑器 / 系统
